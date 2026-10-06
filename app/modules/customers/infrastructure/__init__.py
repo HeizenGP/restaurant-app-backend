@@ -1,0 +1,1 @@
+"""Customer outbound adapters."""

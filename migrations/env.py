@@ -4,12 +4,16 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlmodel import SQLModel
 
+from app.modules.auth.infrastructure.persistence import models as auth_models
+from app.modules.branches.infrastructure.persistence import models as branch_models
+from app.modules.customers.infrastructure.persistence import models as customer_models
 from app.shared.infrastructure.config.settings import get_settings
 from app.shared.infrastructure.database.engine import create_database_engine
 from app.shared.infrastructure.logging.config import configure_logging
 
-# Import future slices' persistence models here before accessing metadata.
-# Phase 0 intentionally has no business tables or model imports.
+# Referencing the modules documents and preserves the imports that register every
+# Phase 1 table on SQLModel.metadata before Alembic inspects it.
+_PHASE_ONE_MODEL_MODULES = (auth_models, branch_models, customer_models)
 target_metadata = SQLModel.metadata
 settings = get_settings()
 configure_logging(settings)
@@ -58,5 +62,9 @@ async def run_migrations_online() -> None:
 
 if context.is_offline_mode():
     run_migrations_offline()
+elif context.config.attributes.get("connection") is not None:
+    # An explicit caller-owned connection lets isolated migration tests roll back
+    # all DDL without connecting to the configured development database.
+    do_run_migrations(context.config.attributes["connection"])
 else:
     asyncio.run(run_migrations_online())

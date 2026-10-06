@@ -9,7 +9,12 @@ from starlette.exceptions import HTTPException
 
 from app.shared.application.exceptions import (
     ApplicationError,
+    ConflictError,
     DependencyUnavailableError,
+    ForbiddenError,
+    NotFoundError,
+    TooManyRequestsError,
+    UnauthorizedError,
 )
 from app.shared.domain.exceptions import DomainError
 
@@ -54,8 +59,22 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
 async def application_error_handler(
     request: Request, exc: ApplicationError
 ) -> JSONResponse:
-    status_code = 503 if isinstance(exc, DependencyUnavailableError) else 400
-    return error_response(status_code, exc.code, exc.message)
+    status_code = 400
+    headers = None
+    if isinstance(exc, UnauthorizedError):
+        status_code = 401
+        headers = {"WWW-Authenticate": "Bearer"}
+    elif isinstance(exc, ForbiddenError):
+        status_code = 403
+    elif isinstance(exc, NotFoundError):
+        status_code = 404
+    elif isinstance(exc, ConflictError):
+        status_code = 409
+    elif isinstance(exc, TooManyRequestsError):
+        status_code = 429
+    elif isinstance(exc, DependencyUnavailableError):
+        status_code = 503
+    return error_response(status_code, exc.code, exc.message, headers=headers)
 
 
 async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
@@ -83,7 +102,18 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
     )
     # Keep diagnostic locations without logging exception values or request secrets.
     logger.error("Unhandled %s at %s", type(exc).__name__, locations)
-    return error_response(500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
+    response = error_response(
+        500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred"
+    )
+    # ServerErrorMiddleware is outside CORSMiddleware. Preserve allowed-origin
+    # headers for this response without changing the application factory contract.
+    origin = request.headers.get("origin")
+    settings = getattr(request.app.state, "settings", None)
+    if origin is not None and settings is not None and origin in settings.cors_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
 
 
 def register_exception_handlers(application: FastAPI) -> None:

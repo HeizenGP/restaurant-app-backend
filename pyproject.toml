@@ -9,6 +9,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
 filterwarnings = ["error"]
+markers = [
+    "integration: PostgreSQL tests, opt-in with pytest -m integration and TEST_DATABASE_URL",
+]
 
 [tool.ruff]
 target-version = "py311"
