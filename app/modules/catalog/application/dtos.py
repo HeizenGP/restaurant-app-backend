@@ -160,6 +160,13 @@ class AddonSelection:
 
 
 @dataclass(frozen=True, kw_only=True)
+class SelectedAddonOption:
+    addon_id: UUID
+    option_id: UUID
+    additional_price: Decimal
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProductSelection:
     """Catalog validation result, not a persisted cart or order."""
 
@@ -171,3 +178,4 @@ class ProductSelection:
     addons_price: Decimal
     unit_price: Decimal
     allows_notes: bool
+    selected_options: tuple[SelectedAddonOption, ...] = ()

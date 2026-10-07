@@ -5,6 +5,8 @@ PostgreSQL, SQLModel y SQLAlchemy 2.x. La Fase 1 incorpora identidad,
 autenticación, clientes, direcciones, sucursales y autorización de personal por
 sucursal sobre la base profesional creada en la Fase 0. La Fase 2 añade el
 catálogo global, el menú público, su administración y los overrides por sucursal.
+La Fase 3 incorpora carritos de invitados/registrados y cálculo de precios con
+snapshots generados exclusivamente por el backend.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -12,6 +14,9 @@ catálogo global, el menú público, su administración y los overrides por sucu
 > rama ni se realizó commit, merge, rebase o push por parte del agente. Para
 > Fase 2 también prevalece la instrucción directa de continuar en esta misma
 > rama sobre el nombre feat/catalog del documento de requisitos.
+> Para Fase 3 se mantiene igualmente chore/backend-foundation, por instrucción
+> directa, aunque el documento mencione feat/cart. Fase 2 ya estaba committeada
+> por el usuario en b2e9de5; el agente no crea commits ni pushes de Fase 3.
 
 ## Alcance de la Fase 1
 
@@ -104,6 +109,13 @@ app/
 │   │   │   ├── authorization.py
 │   │   │   └── persistence/
 │   │   └── presentation/
+│   ├── cart/
+│   │   ├── domain/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   │   ├── catalog.py
+│   │   │   └── persistence/
+│   │   └── presentation/
 │   └── health/
 │       ├── application/
 │       ├── infrastructure/
@@ -115,7 +127,8 @@ migrations/
 ├── env.py
 └── versions/
     ├── 0001_create_phase1_identity_branches_customers.py
-    └── 0002_create_catalog.py
+    ├── 0002_create_catalog.py
+    └── 0003_create_cart.py
 ~~~
 
 Lifespan crea un único engine y una fábrica de sesiones. Cada petición recibe
@@ -510,7 +523,7 @@ pertenece a staff_assignments.
 ## Alembic y bases existentes
 
 migrations/env.py importa explícitamente los modelos de auth, customers,
-branches, catalog y auditoría compartida antes de leer SQLModel.metadata.
+branches, catalog, cart y auditoría compartida antes de leer SQLModel.metadata.
 El filtro de autogenerate evita proponer drops de tablas
 externas que todavía no pertenecen a los modelos.
 
@@ -522,8 +535,8 @@ alembic heads
 alembic history
 ~~~
 
-La cadena es base -> 0001_phase1 -> 0002_catalog, con un único head:
-0002_catalog. La revisión 0001 no se modificó. No ejecutes alembic upgrade head sobre una
+La cadena es base -> 0001_phase1 -> 0002_catalog -> 0003_cart, con un único head:
+0003_cart. Las revisiones 0001/0002 no se modificaron. No ejecutes alembic upgrade head sobre una
 base existente sin inspeccionarla primero.
 
 ### Base limpia o exclusiva de test
@@ -587,8 +600,10 @@ Requiere TEST_DATABASE_URL en el entorno, un nombre con test_ o _test, una base
 vacía y distinta de la habitual. Sin esa configuración se omite; pytest normal
 siempre las omite. La prueba de Fase 1 apunta explícitamente a 0001_phase1 y
 comprueba sus doce tablas, claves, seeds, columna generada e índice default.
-La prueba de Fase 2 aplica head, comprueba las veinte tablas, constraints reales,
-CATALOG_MANAGE y operaciones del adaptador con auditoría. Cada prueba trabaja
+La prueba de Fase 2 apunta a 0002_catalog y comprueba veinte tablas, constraints,
+CATALOG_MANAGE y operaciones del adaptador con auditoría. La de Fase 3 aplica
+head, comprueba las tres tablas de carrito, constraints y adaptadores reales,
+y hace downgrade exclusivo a 0002 dentro de la transacción de test. Cada prueba trabaja
 dentro de una transacción externa que revierte todo el DDL al terminar.
 No crean/eliminan bases, no ejecutan downgrade y nunca modifican objetos
 previos. No apuntes TEST_DATABASE_URL a desarrollo o producción.
@@ -850,3 +865,201 @@ y aplicación controlada de migración en una base compatible o reconciliación
 autorizada del esquema preexistente. Favoritos, uploads
 físicos, carrito, pedidos, pagos, cocina, delivery y los demás módulos posteriores
 quedan expresamente fuera de esta fase.
+
+## Fase 3 — Carrito y cálculo de precios
+
+Cart cubre CU-05/CU-12, RF-15/16/17 y las dependencias RF-12/13/14. Está separado
+en Domain, Application, Infrastructure y Presentation, con puertos concretos.
+Catalog sigue siendo dueño de disponibilidad, presentaciones, reglas de
+adicionales y precios. Cart es dueño de cantidad, notas elegidas, snapshots y
+totales. No hay dependencia Catalog -> Cart ni otro sistema de login/sesiones.
+
+### Propiedad y sucursal
+
+El propietario persistente es customers.id, no users.id. Se reutiliza la
+dependencia get_current_customer, con JWT guest o registered y validación actual
+de Fase 1. Personal sin Customer no tiene carrito. No se crea CART_MANAGE.
+
+Cada Cart tiene una única branch_id. Ningún item tiene branch_id; toda selección
+se valida usando cart.branch_id. No hay cambio de sucursal ni traslado automático
+de líneas: para cambiar se abandona el carrito y se crea otro. Solo puede existir
+un ACTIVE por Customer. DELETE /cart cambia a ABANDONED, conserva sus líneas y
+permite crear otro; un abandonado nunca se reutiliza.
+
+GET y las escrituras obtienen el carrito desde el Customer autenticado. No
+aceptan customer_id/cart_id en body ni query. Un item ajeno devuelve 404, sin
+revelar su propietario. La promoción guest -> registered conserva automáticamente
+el carrito al mantener customer_id; se probó mediante OTP/registro reales del
+servicio existente, sin cambiar Auth.
+
+### Persistencia y migración 0003
+
+| Tabla | Responsabilidad |
+| --- | --- |
+| carts | Customer, sucursal, ACTIVE/ABANDONED y timestamps |
+| cart_items | Producto, presentación, cantidad, notas y cuatro snapshots |
+| cart_item_addon_options | Grupo/opción seleccionados y snapshot de precio por opción |
+
+cart_item_addon_options añade product_addon_id además de la opción, para reconstruir
+la selección incluso si Catalog archiva el grupo. Ambos IDs provienen de Catalog,
+nunca de un precio del request. La relación es normalizada, sin arrays/JSON de
+selecciones persistidas. No se duplican nombres del catálogo.
+
+0003_cart depende de 0002_catalog. Crea solo tres tablas, índices y dos triggers
+que reutilizan restaurant_phase1_set_updated_at(). No modifica 0001/0002 ni crea
+funciones/roles/permisos. Downgrade a 0002 elimina solo estos objetos de Cart.
+
+CHECK protege estado, cantidad, notas y snapshots no negativos, y exige
+unit_price_snapshot = presentation_price_snapshot + addons_price_snapshot.
+UNIQUE parcial de customer_id WHERE status='ACTIVE' protege creación concurrente.
+UNIQUE de cart_item_id/product_addon_option_id impide seleccionar una opción
+duplicada. Las FK a Customer/Branch/Catalog y cart_items -> carts usan RESTRICT;
+las opciones seleccionadas usan CASCADE al eliminar físicamente su cart item.
+
+El máximo técnico de quantity es 10000, no una regla comercial del restaurante.
+Notas: máximo 1000 caracteres, trim, espacios solos -> null; se permiten saltos
+de línea. El HTTP limita cada request a 100 grupos y 100 IDs por grupo como
+protección de tamaño, sin inventar opciones de negocio.
+
+Snapshots usan NUMERIC(18,2), ampliando la capacidad respecto a importes
+individuales NUMERIC(12,2) de Catalog: una presentación y una suma de adicionales
+pueden superar el máximo de una columna individual del catálogo. Todo cálculo
+usa Decimal y dos decimales. No se persisten line_total ni totales en carts.
+
+### Integración con Catalog y snapshots
+
+CatalogSelectionGateway es el puerto de Cart. El adaptador llama al
+CatalogService.validate_selection existente; no consulta manualmente productos
+para recalcular precios. Se amplió ProductSelection de forma compatible con
+selected_options, incluyendo IDs de grupo/opción y precio validado de cada una.
+Así Cart puede persistir snapshots por opción sin copiar el algoritmo ni volver
+a buscar precios.
+
+~~~text
+Catalog valida IDs/disponibilidad/presentación/adicionales/notas y calcula precios
+    -> base_price_snapshot
+    -> presentation_price_snapshot
+    -> addons_price_snapshot
+    -> unit_price_snapshot
+Cart: unit_price_snapshot * quantity = line_total
+subtotal = suma(line_total)
+charges_total = 0.00
+discount_total = 0.00
+total = subtotal + charges_total - discount_total
+item_count = suma(quantity), no número de líneas
+~~~
+
+Los importes HTTP son strings con dos decimales, igual que Catalog. Flutter
+envía IDs, quantity y notes; precios, snapshots, line_total, total, descuentos y
+cargos se rechazan con 422. Tampoco se admite precio en los grupos del request.
+
+Cada POST /cart/items crea una línea independiente; no se fusionan configuraciones
+iguales automáticamente. Producto agotado, inactivo o archivado no se agrega.
+No se reserva producto, inventario ni precio indefinido.
+
+### Endpoints
+
+Todos usan JWT de un Customer actual, tag cart y el envelope de errores existente.
+
+| Método y ruta | Resultado |
+| --- | --- |
+| POST /api/v1/cart | 201; crea con body branch_id |
+| GET /api/v1/cart | 200; lee snapshots actuales, sin escrituras/repricing |
+| DELETE /api/v1/cart | 204; abandona el ACTIVE |
+| POST /api/v1/cart/items | 201; crea línea validada |
+| PATCH /api/v1/cart/items/{item_id} | 200; edita/revalida línea propia |
+| DELETE /api/v1/cart/items/{item_id} | 204; elimina línea y sus opciones |
+| POST /api/v1/cart/recalculate | 200; revalida todo y actualiza snapshots |
+
+Cart inexistente y línea inexistente/ajena: 404. Sin JWT/Customer: 401;
+cuenta rechazada por Auth conserva sus códigos existentes. Conflictos de
+selección/disponibilidad/ACTIVE duplicado: 409. Datos inválidos: 422.
+Indisponibilidad técnica PostgreSQL/Catalog: 503, no se convierte en 404/409.
+
+Ejemplo de POST item; sustituir IDs por recursos reales:
+
+~~~json
+{
+  "product_id": "00000000-0000-0000-0000-000000000001",
+  "presentation_id": "00000000-0000-0000-0000-000000000002",
+  "quantity": 2,
+  "notes": "Sin cebolla",
+  "addons": [
+    {
+      "addon_id": "00000000-0000-0000-0000-000000000003",
+      "option_ids": ["00000000-0000-0000-0000-000000000004"]
+    }
+  ]
+}
+~~~
+
+PATCH admite únicamente quantity, notes, presentation_id y addons. Omitido
+conserva valor; notes=null limpia observación; addons=[] elimina opciones si
+Catalog permite la selección vacía. quantity=0 no elimina: devuelve 422.
+PATCH revalida incluso al cambiar solo quantity y actualiza todos los snapshots
+de la línea. No permite cambiar product_id.
+
+DELETE y recalculate no requieren body; si se envía JSON, solo se admite un objeto
+vacío o null. Campos extra de identidad/precio se rechazan. Ninguna ruta admite
+query parameters de identidad/sucursal.
+
+CartResponse contiene id, branch_id, status, items, subtotal, charges_total,
+discount_total, total, item_count y timestamps. Cada item contiene IDs, quantity,
+notes, opciones seleccionadas con snapshots, los cuatro snapshots, line_total
+y timestamps. GET conserva líneas inválidas: el cliente decide eliminarlas.
+
+### Recalculate, atomicidad y concurrencia
+
+GET obtiene las tres tablas en una sola SELECT con LEFT JOIN y ownership,
+evitando N+1 y lecturas monetarias mezcladas bajo concurrencia. No consulta Catalog,
+no toma FOR UPDATE y no confirma escrituras. Orden de líneas: created_at, id;
+opciones: created_at, id.
+
+Todas las mutaciones de un carrito existente bloquean primero el Cart ACTIVE
+del Customer, luego la línea cuando corresponde. Así PATCH, DELETE, abandon,
+add y recalculate se serializan sobre el mismo padre. PostgreSQL UNIQUE es la
+barrera final de creación, donde aún no hay fila Cart para bloquear.
+
+Recalculate valida todas las líneas contra Catalog antes de escribir cualquier
+snapshot. Después actualiza líneas y opciones y hace un solo commit. Si una línea
+falla, responde CART_RECALCULATION_FAILED 409; no hay cambios parciales ni
+eliminación automática. También se revierte todo si falla una escritura/commit.
+Los adaptadores no deciden commits de negocio; Application controla la transacción.
+
+Los snapshots de opciones se actualizan junto con el item; IDs/created_at de
+opciones conservadas se mantienen. updated_at de Cart/CartItem viene del trigger
+existente. Agregar/eliminar una línea también actualiza el timestamp del padre.
+
+Si Catalog cambia entre peticiones: ADD/PATCH usan precio actual; GET conserva
+snapshot previo; RECALCULATE actualiza todo. No se garantiza disponibilidad
+futura ni se congela precio. Checkout deberá revalidar de nuevo en su propia fase.
+Los cambios de clientes no llenan audit_logs administrativos.
+
+### Tests y límites de validación
+
+~~~bash
+pytest tests/modules/cart -q
+pytest
+ruff check .
+ruff format --check .
+git diff --check
+alembic heads
+alembic history
+pytest -m integration
+~~~
+
+La suite añade pruebas de dominio, servicio con Catalog real sobre fakes,
+API/JWT/guest->registered, SQL/ownership/locks/consulta única, migración offline
+y una integración PostgreSQL opt-in. La integración aplica head en TEST vacía,
+prueba constraints reales, adaptadores y downgrade 0003 -> 0002, conservando
+Catalog y revirtiendo todo en la transacción externa.
+
+Sin TEST_DATABASE_URL las integraciones se omiten. Fase 3 no intenta reconciliar
+ni modifica la base manual antigua de 49 tablas; no se ejecuta upgrade/stamp
+sobre ella. Los resultados exactos y pendientes están en
+[docs/phase3-report.md](docs/phase3-report.md).
+
+Fuera de alcance: checkout, Orders, Payments, Delivery, modalidades/mesa/dirección,
+pickup scheduling, Kitchen, inventario cuantitativo, Promotions/Coupons/Roulette,
+Notifications y los demás módulos de Fase 4 o posteriores. No hay dependencias
+nuevas ni cambios de requirements.txt, .env o puertos.

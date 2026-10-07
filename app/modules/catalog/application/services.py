@@ -25,6 +25,7 @@ from app.modules.catalog.application.dtos import (
     PublicOption,
     PublicPresentation,
     PublicProduct,
+    SelectedAddonOption,
 )
 from app.modules.catalog.application.errors import (
     CatalogConflictError,
@@ -288,6 +289,7 @@ class CatalogService:
         }:
             raise InvalidSelectionError()
         addon_price = Decimal("0.00")
+        selected_options: list[SelectedAddonOption] = []
         for addon in product.addons:
             selected = chosen.get(addon.id, ())
             minimum = max(addon.min_select, 1 if addon.is_required else 0)
@@ -299,6 +301,14 @@ class CatalogService:
             allowed = {option.id: option for option in addon.options}
             if not set(selected) <= allowed.keys():
                 raise InvalidSelectionError()
+            selected_options.extend(
+                SelectedAddonOption(
+                    addon_id=addon.id,
+                    option_id=option_id,
+                    additional_price=allowed[option_id].additional_price,
+                )
+                for option_id in selected
+            )
             addon_price += sum(
                 (allowed[option_id].additional_price for option_id in selected),
                 Decimal("0.00"),
@@ -312,6 +322,7 @@ class CatalogService:
             addons_price=addon_price,
             unit_price=presentation.effective_price + addon_price,
             allows_notes=product.allows_notes,
+            selected_options=tuple(selected_options),
         )
 
     async def list_categories(self, principal: Principal) -> list[Category]:

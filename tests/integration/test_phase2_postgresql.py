@@ -37,7 +37,7 @@ pytestmark = pytest.mark.integration
 def migrate_and_test_constraints(connection: Connection) -> dict[str, UUID]:
     config = migration_config()
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, "0002_catalog")
     assert set(
         inspect(connection).get_table_names()
     ) == EXPECTED_PHASE_ONE_TABLES | EXPECTED_PHASE_TWO_TABLES | {"alembic_version"}

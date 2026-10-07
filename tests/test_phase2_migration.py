@@ -23,11 +23,10 @@ EXPECTED_PHASE_TWO_TABLES = {
 }
 
 
-def test_phase_two_metadata_owns_exactly_scoped_tables():
+def test_phase_two_metadata_tables_remain_available():
     assert catalog_models and audit_models
-    assert (
-        set(SQLModel.metadata.tables)
-        == EXPECTED_PHASE_ONE_TABLES | EXPECTED_PHASE_TWO_TABLES
+    assert EXPECTED_PHASE_ONE_TABLES | EXPECTED_PHASE_TWO_TABLES <= set(
+        SQLModel.metadata.tables
     )
     for table, field in (
         ("products", "base_price"),
@@ -41,9 +40,8 @@ def test_phase_two_metadata_owns_exactly_scoped_tables():
     assert "branch_id" not in SQLModel.metadata.tables["products"].c
 
 
-def test_phase_two_has_one_linear_head():
+def test_phase_two_revision_keeps_its_predecessor():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == ["0002_catalog"]
     assert scripts.get_revision("0002_catalog").down_revision == "0001_phase1"
     assert scripts.get_revision("0001_phase1").down_revision is None
 

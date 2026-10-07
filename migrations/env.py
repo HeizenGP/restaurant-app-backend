@@ -6,6 +6,7 @@ from sqlmodel import SQLModel
 
 from app.modules.auth.infrastructure.persistence import models as auth_models
 from app.modules.branches.infrastructure.persistence import models as branch_models
+from app.modules.cart.infrastructure.persistence import models as cart_models
 from app.modules.catalog.infrastructure.persistence import models as catalog_models
 from app.modules.customers.infrastructure.persistence import models as customer_models
 from app.shared.infrastructure.audit import models as audit_models
@@ -20,6 +21,7 @@ _PERSISTENCE_MODEL_MODULES = (
     branch_models,
     customer_models,
     catalog_models,
+    cart_models,
     audit_models,
 )
 target_metadata = SQLModel.metadata
