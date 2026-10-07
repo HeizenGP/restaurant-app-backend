@@ -17,10 +17,10 @@ EXPECTED_PHASE_THREE_TABLES = {"carts", "cart_items", "cart_item_addon_options"}
 def test_cart_metadata_adds_only_three_tables_and_owns_no_totals_or_branch_items():
     assert cart_models
     assert (
-        set(SQLModel.metadata.tables)
-        == EXPECTED_PHASE_ONE_TABLES
+        EXPECTED_PHASE_ONE_TABLES
         | EXPECTED_PHASE_TWO_TABLES
         | EXPECTED_PHASE_THREE_TABLES
+        <= set(SQLModel.metadata.tables)
     )
     assert "branch_id" not in SQLModel.metadata.tables["cart_items"].c
     assert not {"subtotal", "total", "charges_total", "discount_total"} & set(
@@ -34,9 +34,8 @@ def test_cart_metadata_adds_only_three_tables_and_owns_no_totals_or_branch_items
                 assert column.type.precision == 18 and column.type.scale == 2
 
 
-def test_cart_has_one_linear_head_with_catalog_unchanged():
+def test_cart_revision_remains_linear_with_catalog_unchanged():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == ["0003_cart"]
     assert scripts.get_revision("0003_cart").down_revision == "0002_catalog"
     assert scripts.get_revision("0002_catalog").down_revision == "0001_phase1"
 

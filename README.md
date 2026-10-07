@@ -7,6 +7,8 @@ sucursal sobre la base profesional creada en la Fase 0. La Fase 2 añade el
 catálogo global, el menú público, su administración y los overrides por sucursal.
 La Fase 3 incorpora carritos de invitados/registrados y cálculo de precios con
 snapshots generados exclusivamente por el backend.
+La Fase 4 incorpora pedidos históricos LOCAL/PICKUP/DELIVERY, checkout atómico,
+idempotencia y configuración de mesas, recojo y cobertura por sucursal.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -17,6 +19,9 @@ snapshots generados exclusivamente por el backend.
 > Para Fase 3 se mantiene igualmente chore/backend-foundation, por instrucción
 > directa, aunque el documento mencione feat/cart. Fase 2 ya estaba committeada
 > por el usuario en b2e9de5; el agente no crea commits ni pushes de Fase 3.
+> Fase 3 está ahora en 902014f. Para Fase 4 también prevalece la instrucción
+> directa de mantener chore/backend-foundation sobre feat/orders del adjunto.
+> Los cambios de Fase 4 permanecen sin staging, commit ni push.
 
 ## Alcance de la Fase 1
 
@@ -116,6 +121,11 @@ app/
 │   │   │   ├── catalog.py
 │   │   │   └── persistence/
 │   │   └── presentation/
+│   ├── orders/
+│   │   ├── domain/
+│   │   ├── application/
+│   │   ├── infrastructure/persistence/
+│   │   └── presentation/
 │   └── health/
 │       ├── application/
 │       ├── infrastructure/
@@ -128,7 +138,8 @@ migrations/
 └── versions/
     ├── 0001_create_phase1_identity_branches_customers.py
     ├── 0002_create_catalog.py
-    └── 0003_create_cart.py
+    ├── 0003_create_cart.py
+    └── 0004_create_orders.py
 ~~~
 
 Lifespan crea un único engine y una fábrica de sesiones. Cada petición recibe
@@ -535,8 +546,9 @@ alembic heads
 alembic history
 ~~~
 
-La cadena es base -> 0001_phase1 -> 0002_catalog -> 0003_cart, con un único head:
-0003_cart. Las revisiones 0001/0002 no se modificaron. No ejecutes alembic upgrade head sobre una
+La cadena es base -> 0001_phase1 -> 0002_catalog -> 0003_cart -> 0004_orders,
+con un único head: 0004_orders. Las revisiones 0001/0002/0003 no se modificaron.
+No ejecutes alembic upgrade head sobre una
 base existente sin inspeccionarla primero.
 
 ### Base limpia o exclusiva de test
@@ -602,11 +614,13 @@ siempre las omite. La prueba de Fase 1 apunta explícitamente a 0001_phase1 y
 comprueba sus doce tablas, claves, seeds, columna generada e índice default.
 La prueba de Fase 2 apunta a 0002_catalog y comprueba veinte tablas, constraints,
 CATALOG_MANAGE y operaciones del adaptador con auditoría. La de Fase 3 aplica
-head, comprueba las tres tablas de carrito, constraints y adaptadores reales,
+0003_cart, comprueba las tres tablas de carrito, constraints y adaptadores reales,
 y hace downgrade exclusivo a 0002 dentro de la transacción de test. Cada prueba trabaja
 dentro de una transacción externa que revierte todo el DDL al terminar.
-No crean/eliminan bases, no ejecutan downgrade y nunca modifican objetos
-previos. No apuntes TEST_DATABASE_URL a desarrollo o producción.
+No crean/eliminan bases ni modifican objetos preexistentes. Los downgrades de
+prueba solo se ejecutan dentro de esas transacciones TEST, nunca contra
+desarrollo/producción. Fase 4 valida también checkout y su rollback, constraints,
+seeds, permisos y downgrade de 0004 a 0003 con rechazo seguro de CHECKED_OUT.
 
 ## Errores y privacidad
 
@@ -1050,7 +1064,7 @@ pytest -m integration
 
 La suite añade pruebas de dominio, servicio con Catalog real sobre fakes,
 API/JWT/guest->registered, SQL/ownership/locks/consulta única, migración offline
-y una integración PostgreSQL opt-in. La integración aplica head en TEST vacía,
+y una integración PostgreSQL opt-in. La integración aplica 0003_cart en TEST vacía,
 prueba constraints reales, adaptadores y downgrade 0003 -> 0002, conservando
 Catalog y revirtiendo todo en la transacción externa.
 
@@ -1063,3 +1077,226 @@ Fuera de alcance: checkout, Orders, Payments, Delivery, modalidades/mesa/direcci
 pickup scheduling, Kitchen, inventario cuantitativo, Promotions/Coupons/Roulette,
 Notifications y los demás módulos de Fase 4 o posteriores. No hay dependencias
 nuevas ni cambios de requirements.txt, .env o puertos.
+
+## Fase 4 — Orders
+
+Orders cubre la creación y consulta de pedidos históricos, CU-06/CU-13 y las
+reglas locales de RF-18..37 dentro de los límites de Payments/Kitchen/Notifications.
+No implementa la pasarela, despacho real a cocina ni notificaciones.
+
+### Cart → Order, snapshots e idempotencia
+
+POST /api/v1/orders obtiene Customer desde el JWT existente y la sucursal desde
+su ACTIVE Cart. Bloquea contexto Customer/Cart, revalida todas las líneas con
+la misma política de Catalog, valida la modalidad, persiste Order, líneas,
+adicionales, detalle, cálculo horario e historial, marca Cart CHECKED_OUT y
+hace un único commit. Cualquier fallo revierte todo. Nunca llama al recalculate
+público de Cart ni hace commits desde gateways.
+
+Cart CHECKED_OUT no se modifica, abandona, recalcula ni reactiva. Puede crearse
+otro ACTIVE. Sus snapshots originales no se reescriben: el precio final validado
+y los totales definitivos pertenecen al Order histórico.
+
+Cada Order conserva nombres de producto/presentación/grupo/opción, importes,
+notas/cantidad, contacto del Customer y configuración efectiva de sucursal.
+Delivery conserva dirección, destinatario, zona, fee y ETA; Local conserva
+etiqueta de mesa y política de confirmación. Cambiar Catalog, perfil, dirección,
+mesa o configuración no recalcula un pedido anterior.
+
+Idempotency-Key es obligatorio: 1..128 caracteres ASCII alfanuméricos o . _ : -.
+Se recomienda un UUID nuevo para cada intento lógico, conservado en sus retries;
+nunca usar un JWT. Mismo Customer/key/payload canónico devuelve el mismo Order.
+Payload diferente devuelve 409 IDEMPOTENCY_KEY_REUSED. Tanto creación como
+replay responden 201. La huella SHA-256 incluye Customer, source_cart_id,
+modalidad y campos pertinentes; normaliza timestamps a UTC. No incluye tokens
+ni precios enviados por Flutter. El replay sigue apuntando al pedido original
+aunque ya exista un nuevo carrito activo.
+
+UNIQUE(source_cart_id) y UNIQUE(customer_id,idempotency_key) son barreras
+PostgreSQL finales. Se resuelve la carrera UNIQUE con rollback y lectura del
+ganador. order_number usa BIGINT GENERATED BY DEFAULT AS IDENTITY, no MAX+1;
+puede tener huecos por rollback y no es un contador por sucursal.
+
+Los locks son Customer → Cart → CartItems → Branch → Category → Product →
+settings/modalidad. Catalog mantiene locks SHARE de categoría/producto hasta
+el commit, compatibles con lecturas y excluyentes con administración. Todas las
+consultas de selección/nombres se agrupan: cinco consultas Catalog para los
+productos seleccionados, no por línea. Una carrera de cambio de categoría
+rechaza el checkout y permite reintentar sin adquirir locks fuera de orden.
+Lectura de pedidos carga colecciones en lotes, sin N+1 por pedido.
+
+### Contratos de creación y estados iniciales
+
+Se usa discriminated union con mode y extra=forbid. No se aceptan branch_id,
+customer_id, IDs del pedido, precios, status, payment_status ni timestamps
+administrativos. Pickup/Delivery no admiten payment_method; ONLINE es implícito.
+
+~~~json
+{"mode":"LOCAL","table_qr_token":"UUID-del-QR","payment_method":"CASH"}
+~~~
+
+~~~json
+{"mode":"PICKUP","requested_pickup_at":"2026-10-07T18:30:00-05:00"}
+~~~
+
+~~~json
+{"mode":"DELIVERY","address_id":"UUID-direccion-propia"}
+~~~
+
+| Modalidad | Método | Estado inicial |
+| --- | --- | --- |
+| LOCAL | ONLINE | PENDING_PAYMENT |
+| LOCAL | CASH, confirmación requerida | PENDING_CASH_CONFIRMATION |
+| LOCAL | CASH, confirmación no requerida | WAITING |
+| PICKUP | ONLINE | PENDING_PAYMENT |
+| DELIVERY | ONLINE | PENDING_PAYMENT |
+
+payment_status siempre inicia PENDING. Liberar CASH cambia a WAITING, agrega
+history y confirmed_at, pero NO lo marca PAID. Todas las transiciones ejecutadas
+se registran en la misma transacción. OrderStatus modela los estados futuros
+SCHEDULED, PREPARING, READY, READY_FOR_PICKUP, OUT_FOR_DELIVERY, SERVED,
+PICKED_UP, DELIVERED y CANCELLED. La política de dominio limita transiciones por
+modalidad y exige PAID antes de activar un ONLINE; también existe CHECK de gating.
+No hay endpoints para mark-paid, editar status arbitrario, recalculate Order,
+Kitchen, entregas ni cancelaciones.
+
+### LOCAL y administración de mesas
+
+El cliente envía qr_token UUID de alta entropía generado por backend, nunca un
+table_id arbitrario. Mesa inexistente/inactiva: 404 TABLE_NOT_FOUND; mesa de
+otra sucursal: 409 TABLE_BRANCH_MISMATCH. La mesa no es exclusiva: admite
+múltiples pedidos independientes. DELETE desactiva; PATCH rotate_qr_token=true
+rota el QR explícitamente. Los pedidos anteriores mantienen su table_label.
+
+### PICKUP, horarios y scheduling
+
+requested_pickup_at exige timezone y una fecha futura suficientemente lejana.
+Todos los timestamps se persisten TIMESTAMPTZ; cálculos internos en UTC.
+branch_hours usa 0=lunes, 6=domingo, convertido a la timezone de
+branch_order_settings. Cierre es exclusivo; admite intervalos nocturnos.
+Sin ningún horario configurado no se inventa cierre; si hay horarios parciales,
+los días no cubiertos no admiten pickup. Fecha pasada, demasiado próxima o fuera
+de horario: 409 PICKUP_TIME_UNAVAILABLE.
+
+KitchenLoadEstimator es un port reemplazable. La implementación determinista
+cuenta únicamente WAITING y PREPARING de la sucursal. PENDING_PAYMENT,
+PENDING_CASH_CONFIRMATION, SCHEDULED, listos y terminales no cuentan como cola.
+
+~~~text
+queue_delay = queue_depth * queue_delay_per_order_minutes
+estimated_prep = default_prep_minutes + queue_delay
+estimated_ready_at = requested_pickup_at - pickup_buffer_minutes
+calculated_kitchen_release_at = estimated_ready_at - estimated_prep
+~~~
+
+Se persisten entradas/resultados en order_schedule_calculations, y nombre/teléfono
+de recojo en order_pickup_details. Calcular el release no despacha a cocina:
+el pedido sigue PENDING_PAYMENT. La política futura de Payments elige SCHEDULED
+si aún no es hora, o WAITING si corresponde. El port/repository ya permite
+consultar pickups SCHEDULED/PAID vencidos; no se instaló un scheduler falso.
+
+### DELIVERY, cobertura, mínimo, fee y ETA
+
+address_id se consulta por id + customer_id: dirección ajena/inexistente da el
+mismo 404 DELIVERY_ADDRESS_NOT_FOUND. Se copia todo el contacto/dirección/lat/lng;
+la FK al address usa SET NULL para permitir eliminarlo conservando snapshots.
+
+Migración 0004 siembra políticas globales gratuitas idempotentes: Tarapoto,
+Morales y La Banda de Shilcayo. trim y CITEXT evitan diferencias por capitalización.
+Una política global gratuita activa precede un override pagado de sucursal.
+Las zonas de sucursal permiten fee y travel_minutes configurables. Los ADMIN de
+sucursal no pueden editar ni eliminar las políticas globales. Sin cobertura:
+409 DELIVERY_ZONE_UNAVAILABLE; nunca se inventa una tarifa ni se hace geocoding.
+
+delivery_minimum_order se compara con el subtotal de productos ANTES del fee.
+Incumplimiento: 409 DELIVERY_MINIMUM_NOT_MET. El fee no permite alcanzar el mínimo.
+Para esta fase discount_total=0.00 y charges_total=delivery_fee:
+total=subtotal+charges_total-discount_total. LOCAL/PICKUP tienen delivery_fee=0.00.
+Importes NUMERIC(18,2)/Decimal; API serializa dinero como cadenas de dos decimales.
+
+estimated_delivery_at = now + estimated_prep + estimated_travel_minutes,
+con travel de la zona si existe, o default de sucursal. Se guarda como estimación
+inicial, no garantía ni recalculado silencioso. No se implementan GPS/mapas,
+asignación de repartidores ni tracking en vivo.
+
+### Configuración efectiva y permisos
+
+Defaults conservadores, no reglas inmutables del restaurante:
+
+| Configuración | Default |
+| --- | --- |
+| cash_payment_requires_confirmation | true |
+| delivery_minimum_order | 0.00 |
+| default_prep_minutes | 20 |
+| queue_delay_per_order_minutes | 5 |
+| pickup_buffer_minutes | 5 |
+| delivery_default_travel_minutes | 20 |
+| timezone | America/Lima |
+
+Minutos configurables 0..1440; prep mínimo 1. Son límites técnicos documentados.
+GET de settings sin fila devuelve defaults sin escribir; PATCH inicial hace
+UPSERT. Timestamps de defaults no persistidos indican la construcción de esa
+configuración efectiva; Order guarda la fotografía usada en su checkout.
+La timezone de Orders prima para sus reglas de horario.
+
+ORDER_SETTINGS_MANAGE administra settings/tables/zones;
+ORDER_MANAGE permite confirm-cash-release. Ambos se siembran para ADMIN de forma
+idempotente y branch-scoped. Se reutilizan permisos/asignación/cuenta actuales
+de BD, nunca roles embebidos en el JWT. ADMIN de A no opera sobre B.
+
+### Endpoints y consulta histórica
+
+| Métodos | Ruta /api/v1 | Uso |
+| --- | --- | --- |
+| POST, GET | /orders | Checkout; historial propio limit=1..100, offset>=0 |
+| GET | /orders/{order_id} | Detalle propio; ajeno/inexistente 404 |
+| POST | /admin/orders/{order_id}/confirm-cash-release | Liberar CASH LOCAL pendiente |
+| GET, PATCH | /admin/orders/branches/{branch_id}/settings | Configuración efectiva |
+| GET, POST | /admin/orders/branches/{branch_id}/tables | Listar/crear mesas |
+| PATCH, DELETE | /admin/orders/branches/{branch_id}/tables/{table_id} | Editar/rotar/desactivar |
+| GET, POST | /admin/orders/branches/{branch_id}/delivery-zones | Listar globales+propias/crear propias |
+| PATCH, DELETE | /admin/orders/branches/{branch_id}/delivery-zones/{zone_id} | Editar/desactivar propias |
+
+14 operaciones en 8 paths. POST=201, GET/PATCH/cash release=200, DELETE=204.
+401 sin autenticación, 403 sin autorización (incluye cuenta bloqueada según Auth
+existente), 404 recurso ajeno/inexistente, 409 conflicto, 422 payload inválido,
+503 dependencia técnica caída. Lista ordena created_at DESC, id DESC. El error
+envelope existente no revela SQL, DSN, secretos ni valores de input rechazados.
+Idempotency-Key/fingerprint/configuración interna no se exponen en OrderResponse.
+
+### Migración 0004 y validación
+
+Once tablas nuevas: orders, order_items, order_item_addon_options,
+order_status_history, order_local_details, order_pickup_details,
+order_delivery_details, restaurant_tables, branch_order_settings, delivery_zones,
+order_schedule_calculations. Junto a fases anteriores son 34 tablas de aplicación.
+
+0004_orders depende de 0003_cart y altera solo su constraint de status para
+añadir CHECKED_OUT; 0001/0002/0003 permanecen intactas. Añade constraints, índices,
+cuatro triggers reutilizando la función existente, permisos y free-zone seeds.
+Downgrade 0004→0003 se niega ANTES de borrar objetos si hay CHECKED_OUT; no
+reescribe carritos históricos para hacerlo pasar.
+
+~~~bash
+pytest -q tests/modules/orders
+pytest -q tests/test_phase4_migration.py
+pytest
+ruff check .
+ruff format --check .
+git diff --check
+alembic heads
+alembic history
+pytest -m integration
+~~~
+
+Las pruebas PostgreSQL son opt-in, exclusivamente TEST_DATABASE_URL vacía,
+marcada como test y distinta de la normal. Sin ella se omiten. No se migra,
+altera, borra o stampea la base manual antigua de aproximadamente 49 tablas.
+No se valida checkout real contra ella. El servidor puede mostrar Swagger sin
+que esa base esté preparada: disponibilidad HTTP no equivale a migración aplicada.
+
+Resultados exactos, archivos y riesgos: [docs/phase4-report.md](docs/phase4-report.md).
+Pendiente validación PostgreSQL real y despliegue controlado en base compatible.
+RF-25/26/28/34/35/36 quedan parcialmente preparados por depender de Kitchen,
+Notifications y Payments; no se atribuye finalización operativa a esas fases.
+No se inicia Fase 5.

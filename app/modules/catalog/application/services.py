@@ -276,6 +276,19 @@ class CatalogService:
     ) -> ProductSelection:
         """Reusable internal pricing/ownership validation; creates no cart/order."""
         product = await self.product_detail(branch_id, product_id)
+        return self.validate_product_selection(
+            branch_id, product, presentation_id, addons, notes
+        )
+
+    @staticmethod
+    def validate_product_selection(
+        branch_id: UUID,
+        product: PublicProduct,
+        presentation_id: UUID,
+        addons: tuple[AddonSelection, ...] = (),
+        notes: str | None = None,
+    ) -> ProductSelection:
+        """One pricing policy for ordinary Cart and batched, locked checkout."""
         if not product.is_available:
             raise ProductNotAvailableError()
         presentation = next(
@@ -306,6 +319,8 @@ class CatalogService:
                     addon_id=addon.id,
                     option_id=option_id,
                     additional_price=allowed[option_id].additional_price,
+                    addon_name=addon.name,
+                    option_name=allowed[option_id].name,
                 )
                 for option_id in selected
             )
@@ -323,6 +338,8 @@ class CatalogService:
             unit_price=presentation.effective_price + addon_price,
             allows_notes=product.allows_notes,
             selected_options=tuple(selected_options),
+            product_name=product.name,
+            presentation_name=presentation.name,
         )
 
     async def list_categories(self, principal: Principal) -> list[Category]:

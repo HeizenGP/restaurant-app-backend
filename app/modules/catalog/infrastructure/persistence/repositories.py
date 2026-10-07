@@ -128,7 +128,11 @@ class SQLAlchemyCatalogRepository:
         return (await self._session.execute(query)).scalar_one_or_none() is not None
 
     async def public_products(
-        self, branch_id: UUID, product_id: UUID | None = None
+        self,
+        branch_id: UUID,
+        product_id: UUID | None = None,
+        *,
+        product_ids: tuple[UUID, ...] | None = None,
     ) -> list[ProductAggregate]:
         selectable = exists(
             select(ProductPresentationModel.id).where(
@@ -163,6 +167,8 @@ class SQLAlchemyCatalogRepository:
         )
         if product_id is not None:
             query = query.where(ProductModel.id == product_id)
+        if product_ids is not None:
+            query = query.where(ProductModel.id.in_(product_ids))
         rows = (await self._session.execute(query)).all()
         return await self._aggregates(rows, public=True)
 

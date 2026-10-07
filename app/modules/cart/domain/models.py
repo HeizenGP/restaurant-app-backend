@@ -18,6 +18,7 @@ class CartRuleError(ValueError):
 class CartStatus(StrEnum):
     ACTIVE = "ACTIVE"
     ABANDONED = "ABANDONED"
+    CHECKED_OUT = "CHECKED_OUT"
 
 
 def snapshot_money(value: Decimal) -> Decimal:
@@ -53,7 +54,7 @@ class Cart:
     updated_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
-        if self.status not in {CartStatus.ACTIVE, CartStatus.ABANDONED}:
+        if self.status not in set(CartStatus):
             raise CartRuleError("Invalid cart status")
 
 

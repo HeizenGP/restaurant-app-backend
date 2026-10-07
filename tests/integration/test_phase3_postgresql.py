@@ -39,7 +39,7 @@ def migrate_cart_and_check_constraints(connection: Connection):
     ids = migrate_and_test_constraints(connection)
     config = migration_config()
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, "0003_cart")
     tables = set(inspect(connection).get_table_names())
     assert EXPECTED_PHASE_THREE_TABLES <= tables and len(tables) == 24
     assert (

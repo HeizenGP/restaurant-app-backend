@@ -164,6 +164,8 @@ class SelectedAddonOption:
     addon_id: UUID
     option_id: UUID
     additional_price: Decimal
+    addon_name: str = ""
+    option_name: str = ""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -179,3 +181,5 @@ class ProductSelection:
     unit_price: Decimal
     allows_notes: bool
     selected_options: tuple[SelectedAddonOption, ...] = ()
+    product_name: str = ""
+    presentation_name: str = ""

@@ -25,7 +25,9 @@ from app.shared.domain.time import utc_now
 class CartModel(SQLModel, table=True):
     __tablename__ = "carts"
     __table_args__ = (
-        CheckConstraint("status IN ('ACTIVE', 'ABANDONED')", name="ck_carts_status"),
+        CheckConstraint(
+            "status IN ('ACTIVE', 'ABANDONED', 'CHECKED_OUT')", name="ck_carts_status"
+        ),
         Index(
             "uq_carts_active_customer",
             "customer_id",
