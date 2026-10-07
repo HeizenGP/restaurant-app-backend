@@ -47,6 +47,8 @@ TEST_SECRET = b"payments-test-only-not-a-provider-production-signature"
 
 @dataclass
 class MemoryDatabase:
+    refunds: dict = field(default_factory=dict)
+    refund_histories: list = field(default_factory=list)
     orders: dict = field(default_factory=dict)
     payments: dict = field(default_factory=dict)
     attempts: dict = field(default_factory=dict)
@@ -58,6 +60,38 @@ class MemoryDatabase:
 
 
 class MemoryPaymentRepository:
+    async def ensure_cancelled_refund(self, order, payment, now):
+        from app.modules.payments.domain.refunds import (
+            Refund,
+            RefundHistorySource,
+            RefundStatus,
+            RefundStatusHistory,
+            validate_full_refund,
+        )
+
+        validate_full_refund(payment, order.id, order.total, order.payment_method_type)
+        if any(r.order_id == order.id for r in self.db.refunds.values()):
+            return
+        refund = Refund(
+            payment_id=payment.id,
+            order_id=order.id,
+            amount=payment.amount,
+            method_type=payment.method_type,
+            requested_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.refunds[refund.id] = refund
+        self.db.refund_histories.append(
+            RefundStatusHistory(
+                refund_id=refund.id,
+                from_status=None,
+                to_status=RefundStatus.PENDING,
+                source=RefundHistorySource.SYSTEM,
+                created_at=now,
+            )
+        )
+
     def __init__(self, db):
         self.db = db
         self.snapshot = None
@@ -74,6 +108,8 @@ class MemoryPaymentRepository:
                     key: getattr(self.db, key)
                     for key in (
                         "orders",
+                        "refunds",
+                        "refund_histories",
                         "payments",
                         "attempts",
                         "events",

@@ -74,6 +74,17 @@ class SessionAwareTestGateway(TestGateway):
         return await super().create_payment_attempt(request)
 
 
+class HistoricalPhase6PaymentRepository(SQLAlchemyPaymentRepository):
+    """Characterizes the pinned 0006 schema, before refunds existed.
+
+    Current production late-payment registration is tested against 0008 in
+    test_phase8_postgresql, never disabled by production schema detection.
+    """
+
+    async def ensure_cancelled_refund(self, order, payment, now):
+        pass
+
+
 class FailingOrders(SQLAlchemyPaymentOrderLifecycle):
     def __init__(self, session):
         super().__init__(session)
@@ -180,7 +191,7 @@ def test_payments_migration_constraints_atomicity_and_kitchen_projection(request
                             principal_type=PrincipalType.GUEST,
                             customer_id=ids["customer"],
                         )
-                        repo = SQLAlchemyPaymentRepository(session)
+                        repo = HistoricalPhase6PaymentRepository(session)
                         orders = SQLAlchemyPaymentOrderLifecycle(session)
                         authz = SQLAlchemyPaymentAuthorization(session)
                         gateway = SessionAwareTestGateway(session)

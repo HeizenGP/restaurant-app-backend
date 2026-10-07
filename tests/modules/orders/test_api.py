@@ -338,6 +338,7 @@ def test_orders_openapi_has_discriminator_and_no_payment_or_kitchen_write(api):
         path
         for path in schema["paths"]
         if path.startswith(("/api/v1/orders", "/api/v1/admin/orders"))
+        and "/cancellation-requests" not in path
     ]
     assert len(paths) == 8
     assert sum(len(schema["paths"][path]) for path in paths) == 14

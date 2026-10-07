@@ -102,6 +102,16 @@ def attempt_values(attempt: PaymentAttempt) -> dict:
 
 
 class SQLAlchemyPaymentRepository:
+    async def ensure_cancelled_refund(self, order, payment, now) -> None:
+        from app.modules.payments.application.refund_registration import (
+            RefundRegistrationService,
+        )
+        from app.modules.payments.infrastructure.persistence import refund_repositories
+
+        await RefundRegistrationService(
+            refund_repositories.SQLAlchemyRefundRepository(self._session)
+        ).register_full(payment, order.id, order.total, order.payment_method_type, now)
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

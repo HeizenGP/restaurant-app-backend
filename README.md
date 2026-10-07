@@ -1692,3 +1692,106 @@ cupones, stock, notificaciones ni Fase 8.
 [Informe de Fase 7](docs/phase7-report.md): alcance, arquitectura, archivos,
 13 operaciones, pruebas, límites y pendientes. Misma rama chore/backend-foundation,
 sin staging, commit ni push por el agente.
+
+## Fase 8 — Cancellations & Refunds
+
+REFUND ORCHESTRATION: IMPLEMENTADA.
+REAL ONLINE REFUND WITH FINANCIAL PROVIDER: PENDIENTE.
+
+El cliente (también Guest con identidad vigente) solicita cancelación; no la
+ejecuta. ADMIN evalúa/acepta/rechaza y puede cancelar directamente por
+OUT_OF_STOCK u OTHER. Una solicitud PENDING por Order; reintento exacto es
+idempotente. Rechazo deja el pedido intacto y conserva historia. Cancelación
+directa también resuelve una solicitud pendiente, sin borrar evidencias.
+
+Cancelables: PENDING_PAYMENT, PENDING_CASH_CONFIRMATION, SCHEDULED, WAITING,
+PREPARING, READY, READY_FOR_PICKUP, OUT_FOR_DELIVERY.
+SERVED/PICKED_UP/DELIVERED no son cancelables. CANCELLED no se reactiva.
+Se conserva validate_transition; validate_cancellation es política separada.
+Cancelación en ruta cierra la asignación histórica con actor/fecha/reason,
+no elimina asignación ni llama a KitchenService.
+
+Paid cancellation obliga a Refund.amount = Payment.amount = Order.total, PEN y
+Decimal: sin importe ingresado por cliente, porcentaje o refund parcial.
+Order/Payment/items/snapshots/importes históricos no se recalculan.
+Payment sigue PAID incluso después de Refund REFUNDED.
+Unpaid no crea Refund. Order PAID sin evidencia Payment coherente devuelve 503
+y rollback, nunca inventa un cobro. Cero pagado tiene obligación PENDING de 0.00,
+sin transferencia ficticia.
+
+CASH: ADMIN confirma devolución efectiva, PENDING → REFUNDED y audit.
+ONLINE: reserva/commit → OnlineRefundGateway → persistencia/commit; sin HTTP
+dentro de cancelación ni lock DB durante llamada externa. Idempotency-Key
+obligatoria; key externa estable deriva de RefundAttempt UUID. Timeout deja
+reserva recuperable. Captura original ambigua requiere conciliación.
+Proveedor no configurado devuelve 503 sin fingir devolución. Fake solo en tests.
+
+Webhook de reembolso (máximo 64 KiB) se verifica antes de DB, deduplica evento/hash,
+rechaza amount/currency mismatch y conserva evidencia. Éxito tardío tras FAILED
+registra verdad financiera; fallo tras REFUNDED no la revierte. Múltiples éxitos
+señalan conciliación. El webhook de pago original registra Refund en la misma
+transacción si confirma dinero sobre CANCELLED, sin reactivar el pedido.
+
+### Operaciones y permisos de Fase 8
+
+Todas usan /api/v1. Nuevos permisos solo ADMIN BRANCH existente:
+CANCELLATION_VIEW, CANCELLATION_MANAGE, REFUND_MANAGE.
+JWT e identidad actual reales; ownership y sucursal se filtran antes de IDs.
+Customer Refund oculta referencias bancarias, keys, payloads, hashes y notas.
+
+| Método | Ruta sin prefijo /api/v1 | Acceso |
+| --- | --- | --- |
+| POST / GET | /orders/{order_id}/cancellation-requests | Customer propietario |
+| GET | /admin/cancellations/branches/{branch_id}/requests | CANCELLATION_VIEW |
+| POST | /admin/cancellations/branches/{branch_id}/requests/{request_id}/approve | CANCELLATION_MANAGE |
+| POST | /admin/cancellations/branches/{branch_id}/requests/{request_id}/reject | CANCELLATION_MANAGE |
+| POST | /admin/cancellations/branches/{branch_id}/orders/{order_id}/cancel | CANCELLATION_MANAGE |
+| GET | /admin/cancellations/branches/{branch_id}/orders/{order_id} | CANCELLATION_VIEW |
+| GET | /payments/orders/{order_id}/refund | Customer propietario |
+| GET | /admin/refunds/branches/{branch_id} | REFUND_MANAGE |
+| GET | /admin/refunds/branches/{branch_id}/{refund_id} | REFUND_MANAGE |
+| POST | /admin/refunds/branches/{branch_id}/{refund_id}/cash/confirm | REFUND_MANAGE |
+| POST | /admin/refunds/branches/{branch_id}/{refund_id}/online/process | REFUND_MANAGE + Idempotency-Key |
+| POST | /payments/refund-webhooks/{provider_code} | Firma/protocolo gateway, sin JWT |
+
+Bodies extra_forbid: solicitud {"reason":"..."}, evaluación {} o
+{"evaluation_note":"..."}, cancelación {"reason_code":"OUT_OF_STOCK"} o
+{"reason_code":"OTHER","reason":"..."}. Confirmar/procesar Refund admite
+body vacío/{} exclusivamente. Listas limit 1..100 (default 50), offset >= 0,
+filtros status y method_type donde corresponda. Customer create 201, retry 200.
+Errores: 401/403/404/409/422/503, envelope seguro sin inputs/secretos.
+
+### Migración y pruebas de Fase 8
+
+0008_cancellations_refunds depende de 0007_fulfillment, seis tablas:
+cancellation_requests, order_cancellations, refunds, refund_attempts,
+refund_status_history, refund_provider_events. 46 tablas de aplicación, 47 con
+alembic_version. FK RESTRICT, NUMERIC(18,2), checks, diez índices, updated_at
+compartido en tres tablas y protección histórica/financiera por triggers.
+Downgrade aborta antes de cualquier DDL si alguna tabla F8 contiene historia.
+0001–0007 intactas. Sin create_all ni DDL en startup.
+
+~~~bash
+ruff check .
+ruff format --check .
+pytest -q
+pytest tests/modules/cancellations -q
+pytest tests/modules/payments -q
+pytest tests/test_phase8_migration.py -q
+pytest tests/integration/test_phase8_postgresql.py -m integration -q
+alembic heads
+alembic history
+git diff --check
+git status --short --branch
+git diff --stat
+~~~
+
+Integración solo con TEST_DATABASE_URL explícita, dedicada/vacía y distinta de
+normal. Si falta, skip explícito; memoria/SQL compilado no equivale a PostgreSQL
+real ni carreras entre conexiones. No aplicar sobre la base manual incompatible
+ni stamp/autogenerate/reconciliar automáticamente.
+Sin proveedor real no se mueve dinero bancario. Notificaciones y Fase 9 pendientes.
+
+[Informe completo de Fase 8](docs/phase8-report.md): arquitectura, archivos,
+13 operaciones, invariantes, evidencias y límites. Misma rama
+chore/backend-foundation, sin staging/commit/push.

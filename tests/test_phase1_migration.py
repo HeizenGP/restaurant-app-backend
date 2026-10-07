@@ -80,6 +80,7 @@ def test_domain_and_application_do_not_depend_on_external_adapters() -> None:
         "kitchen",
         "payments",
         "fulfillment",
+        "cancellations",
     ):
         for layer in ("domain", "application"):
             root = PROJECT_ROOT / "app" / "modules" / slice_name / layer

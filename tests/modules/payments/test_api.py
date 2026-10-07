@@ -290,6 +290,7 @@ def test_payment_openapi_has_four_operations_and_no_webhook_jwt(api):
         p: v
         for p, v in schema["paths"].items()
         if p.startswith(("/api/v1/payments", "/api/v1/admin/payments"))
+        and "/refund" not in p
     }
     assert len(paths) == 4 and sum(len(v) for v in paths.values()) == 4
     assert (

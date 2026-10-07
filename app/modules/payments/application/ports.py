@@ -53,6 +53,10 @@ class PaymentAuthorization(Protocol):
 
 
 class PaymentRepository(Protocol):
+    async def ensure_cancelled_refund(
+        self, order: OrderPaymentContext, payment: Payment, now: datetime
+    ) -> None: ...
+
     async def get_owned(
         self, customer_id: UUID, order_id: UUID
     ) -> PaymentView | None: ...

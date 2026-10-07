@@ -497,6 +497,10 @@ class PaymentService:
         if attempt.status == AttemptStatus.SUCCEEDED:
             if payment.status != PaymentStatus.PAID:
                 raise PaymentDataError()
+            if order.status == OrderStatus.CANCELLED:
+                await self.repository.ensure_cancelled_refund(
+                    order, payment, self.clock()
+                )
             await self._finish_event(event, EventStatus.IGNORED, "DUPLICATE_SUCCESS")
             return
         now = self.clock()
@@ -507,6 +511,8 @@ class PaymentService:
             ),
         )
         if payment.status == PaymentStatus.PAID:
+            if order.status == OrderStatus.CANCELLED:
+                await self.repository.ensure_cancelled_refund(order, payment, now)
             if not payment.reconciliation_required:
                 await self.repository.save_payment(
                     payment, replace(payment, reconciliation_required=True)
@@ -537,6 +543,7 @@ class PaymentService:
         await self.orders.confirm_paid(order, now, online=True)
         reason = None
         if order.status == OrderStatus.CANCELLED:
+            await self.repository.ensure_cancelled_refund(order, payment, now)
             reason = "PAID_AFTER_CANCELLATION_RECONCILIATION_REQUIRED"
         elif await self.repository.active_attempt(payment.id) is not None:
             reason = "OUTSTANDING_ATTEMPT_RECONCILIATION_REQUIRED"
