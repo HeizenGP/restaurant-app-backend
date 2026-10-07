@@ -9,6 +9,8 @@ La Fase 3 incorpora carritos de invitados/registrados y cálculo de precios con
 snapshots generados exclusivamente por el backend.
 La Fase 4 incorpora pedidos históricos LOCAL/PICKUP/DELIVERY, checkout atómico,
 idempotencia y configuración de mesas, recojo y cobertura por sucursal.
+La Fase 5 añade la cola de cocina, preparación, tiempos y transiciones auditadas
+sobre el estado y el historial existentes de Orders.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -21,7 +23,9 @@ idempotencia y configuración de mesas, recojo y cobertura por sucursal.
 > por el usuario en b2e9de5; el agente no crea commits ni pushes de Fase 3.
 > Fase 3 está ahora en 902014f. Para Fase 4 también prevalece la instrucción
 > directa de mantener chore/backend-foundation sobre feat/orders del adjunto.
-> Los cambios de Fase 4 permanecen sin staging, commit ni push.
+> El usuario guardó Fase 4 en 7201466. Fase 5 continúa desde ese HEAD en
+> **feat/kitchen**, como pide expresamente su documento de requisitos.
+> Los cambios de Fase 5 quedan sin staging, commit ni push.
 
 ## Alcance de la Fase 1
 
@@ -103,6 +107,13 @@ app/
 │   │   ├── application/
 │   │   ├── infrastructure/persistence/
 │   │   └── presentation/
+│   ├── kitchen/
+│   │   ├── domain/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   │   ├── authorization.py
+│   │   │   └── orders.py
+│   │   └── presentation/
 │   ├── branches/
 │   │   ├── application/
 │   │   ├── infrastructure/persistence/
@@ -139,7 +150,8 @@ migrations/
     ├── 0001_create_phase1_identity_branches_customers.py
     ├── 0002_create_catalog.py
     ├── 0003_create_cart.py
-    └── 0004_create_orders.py
+    ├── 0004_create_orders.py
+    └── 0005_create_kitchen.py
 ~~~
 
 Lifespan crea un único engine y una fábrica de sesiones. Cada petición recibe
@@ -546,8 +558,9 @@ alembic heads
 alembic history
 ~~~
 
-La cadena es base -> 0001_phase1 -> 0002_catalog -> 0003_cart -> 0004_orders,
-con un único head: 0004_orders. Las revisiones 0001/0002/0003 no se modificaron.
+La cadena es base -> 0001_phase1 -> 0002_catalog -> 0003_cart -> 0004_orders
+-> 0005_kitchen, con un único head: 0005_kitchen. Las revisiones 0001–0004
+no se modificaron.
 No ejecutes alembic upgrade head sobre una
 base existente sin inspeccionarla primero.
 
@@ -1299,4 +1312,116 @@ Resultados exactos, archivos y riesgos: [docs/phase4-report.md](docs/phase4-repo
 Pendiente validación PostgreSQL real y despliegue controlado en base compatible.
 RF-25/26/28/34/35/36 quedan parcialmente preparados por depender de Kitchen,
 Notifications y Payments; no se atribuye finalización operativa a esas fases.
-No se inicia Fase 5.
+En el cierre de Fase 4 no se inició Fase 5; su implementación se documenta abajo.
+
+## FASE 5 — KITCHEN: cocina y estados
+
+Kitchen es un slice hexagonal de lectura y preparación. Orders sigue siendo
+dueño de `orders.status`, `order_status_history` y su máquina de estados.
+No existen nuevas tablas Kitchen, estados paralelos ni timers persistidos.
+`KitchenOrdersGateway` y `KitchenAuthorization` separan los casos de uso del ORM.
+Orders ofrece un contrato público interno mínimo (`OrderTransitionContext`,
+`lock_preparation_order`, `record_preparation_transition`); Kitchen no llama
+métodos privados de otro slice ni reconstruye el agregado financiero para leer.
+
+### Endpoints y permisos
+
+Todos están bajo `/api/v1/kitchen/branches/{branch_id}`:
+
+| Método | Ruta | Permiso |
+| --- | --- | --- |
+| GET | `/queue` | KITCHEN_VIEW |
+| GET | `/orders/{order_id}` | KITCHEN_VIEW |
+| POST | `/orders/{order_id}/start-preparation` | KITCHEN_MANAGE |
+| POST | `/orders/{order_id}/mark-ready` | KITCHEN_MANAGE |
+
+Los POST admiten cuerpo ausente, `null` o `{}`, siguiendo la política existente;
+cualquier campo funcional o query desconocida devuelve 422. No se admite
+status, actor, reason, timestamp ni payment_status enviado por el cliente.
+
+ADMIN y KITCHEN reciben ambos permisos para asignaciones de sucursal vigentes.
+Un JWT no basta: Auth comprueba la cuenta y la autorización consulta User,
+Branch, StaffAssignment, Role y Permission actuales. No se confía en roles del
+token. KITCHEN no recibe ORDER_MANAGE ni ORDER_SETTINGS_MANAGE.
+Sin token: 401; sin permiso, usuario bloqueado o sucursal inactiva: 403.
+Sucursal inexistente también devuelve 403 al no existir permiso vigente, sin
+revelar recursos. Un pedido de otra sucursal bajo una sucursal autorizada: 404.
+
+### Cola, snapshots y datos mínimos
+
+Respuesta: `generated_at`, `waiting[]`, `preparing[]`, `ready[]`, `limit`,
+`offset`, `has_more`. Cola y detalle se limitan a pedidos operativos confirmados:
+WAITING, PREPARING, READY para LOCAL/DELIVERY y READY_FOR_PICKUP para PICKUP.
+ONLINE exige PAID internamente; CASH LOCAL confirmado mantiene su payment_status.
+Se excluyen impagos, pendientes de caja, SCHEDULED y todos los estados fuera de
+cocina. Consultar nunca libera ni modifica pedidos programados.
+
+La cola prioriza waiting, preparing y ready; dentro de cada columna usa entrada
+al estado ASC, order_number ASC e id ASC. `limit=100` por defecto, máximo 200;
+offset 0–100000. Filtros opcionales `mode` y `status`, solo valores de cocina.
+Para una cola mayor, el consumidor recorre las páginas indicadas por has_more.
+Cada página es una lectura coherente; el polling vuelve a offset 0 porque una
+cola cambiante no garantiza continuidad de snapshots entre páginas.
+
+Items y adicionales usan exclusivamente los nombres históricos de Orders.
+LOCAL muestra table_label, PICKUP fechas de recojo/listo estimado y DELIVERY ETA.
+No hay precios, totales, teléfonos, customer_id, direcciones, coordenadas, QR,
+idempotency key, fingerprint ni actor de auditoría en los responses Kitchen.
+El detalle y los POST incluyen historial; las tarjetas de cola no lo exponen.
+
+Una consulta operacional PostgreSQL agrega items, addons e historial en el mismo
+snapshot MVCC que el estado. No N+1 ni joins a Catalog. La consulta de autorización
+y las consultas de Auth son independientes de esa única consulta de proyección.
+Polling read-only, sin locks de escritura, WebSocket ni nuevas dependencias.
+
+### Transiciones y tiempos
+
+WAITING → PREPARING; PREPARING → READY (LOCAL/DELIVERY) o READY_FOR_PICKUP
+(PICKUP). Se usa FOR UPDATE por id+sucursal, validación oficial Orders y UPDATE
+condicionado al estado anterior. Estado e INSERT de history se confirman juntos;
+los fallos hacen rollback. confirmed_at, pagos y snapshots no cambian.
+History es append-only, con actor obtenido del principal y motivo interno seguro.
+
+Reintento de start mientras PREPARING, o mark-ready en su target correcto:
+200 sin INSERT duplicado. Estado incompatible: 409, sin saltos ni retrocesos.
+No existen comandos de cancelación, pagos, servir, recoger ni entregar.
+
+Los tiempos se calculan con clock inyectable y timestamps aware del historial:
+
+- waiting_seconds: ahora−WAITING mientras espera; PREPARING−WAITING después;
+- preparation_seconds: 0 antes de preparar; ahora−PREPARING preparando;
+  READY/READY_FOR_PICKUP−PREPARING una vez listo;
+- current_status_seconds: ahora−entrada al estado actual.
+
+Segundos enteros, nunca negativos. No se toma created_at como inicio de espera.
+Falta, duplicación o desorden de historia requerido devuelve
+503 KITCHEN_HISTORY_INCONSISTENT: no se fabrica un timestamp.
+
+### Migración 0005 y validación
+
+0005_kitchen depende de 0004_orders. Añade dos permisos, sus cuatro relaciones
+ADMIN/KITCHEN y dos índices: ix_orders_kitchen_queue parcial por sucursal/estado,
+e ix_order_status_history_entry por pedido/estado/fecha/id. Conserva 34 tablas
+de aplicación. Downgrade retira solo esos índices y permisos; no modifica pedidos,
+historiales ni las migraciones anteriores. No hay create_all ni DDL en startup.
+
+~~~bash
+pytest
+pytest tests/modules/kitchen -q
+pytest tests/test_phase5_migration.py -q
+pytest -m integration -q
+ruff check .
+ruff format --check .
+alembic heads
+alembic history
+git diff --check
+~~~
+
+La integración utiliza exclusivamente TEST_DATABASE_URL distinta de la normal,
+con nombre de test y esquema vacío, y revierte DDL/datos mediante transacción
+externa. Sin esta variable se omite: eso NO valida PostgreSQL real. No tocar la
+base manual incompatible ni usar stamp para reconciliarla.
+
+Resultados, archivos, índices, riesgos y pendientes:
+[docs/phase5-report.md](docs/phase5-report.md). No se avanza a Fase 6, Payments,
+scheduler, atención local, entrega pickup/delivery ni Notifications.

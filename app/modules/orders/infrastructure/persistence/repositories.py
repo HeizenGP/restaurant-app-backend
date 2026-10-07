@@ -18,6 +18,10 @@ from app.modules.orders.application.errors import (
     OrderConflictError,
     OrderUniqueConflictError,
 )
+from app.modules.orders.domain.lifecycle import (
+    OrderTransitionContext,
+    validate_preparation_transition,
+)
 from app.modules.orders.domain.models import (
     BranchOrderSettings,
     DeliveryDetails,
@@ -251,6 +255,69 @@ class SQLAlchemyOrderRepository:
             select(OrderModel).where(OrderModel.id == order_id).with_for_update()
         )
         return rows[0] if rows else None
+
+    async def lock_preparation_order(
+        self, branch_id: UUID, order_id: UUID
+    ) -> OrderTransitionContext | None:
+        """Public internal contract: branch-scoped, minimal and serialized."""
+        row = (
+            (
+                await self._session.execute(
+                    select(
+                        OrderModel.id,
+                        OrderModel.branch_id,
+                        OrderModel.mode,
+                        OrderModel.status,
+                        OrderModel.payment_method_type,
+                        OrderModel.payment_status,
+                        OrderModel.confirmed_at,
+                    )
+                    .where(OrderModel.id == order_id, OrderModel.branch_id == branch_id)
+                    .with_for_update(of=OrderModel)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        return OrderTransitionContext(
+            **(
+                dict(row)
+                | {
+                    "mode": OrderMode(row["mode"]),
+                    "status": OrderStatus(row["status"]),
+                    "payment_method_type": PaymentMethodType(
+                        row["payment_method_type"]
+                    ),
+                    "payment_status": PaymentStatus(row["payment_status"]),
+                }
+            )
+        )
+
+    async def record_preparation_transition(
+        self, order: OrderTransitionContext, history: StatusHistory
+    ) -> None:
+        """Orders validates its graph; caller owns the lock and transaction."""
+        validate_preparation_transition(order, history)
+        result = await self._session.execute(
+            update(OrderModel)
+            .where(
+                OrderModel.id == order.id,
+                OrderModel.branch_id == order.branch_id,
+                OrderModel.status == order.status,
+                OrderModel.mode == order.mode,
+                OrderModel.payment_method_type == order.payment_method_type,
+                OrderModel.payment_status == order.payment_status,
+                OrderModel.confirmed_at.is_not(None),
+            )
+            .values(status=history.to_status)
+            .returning(OrderModel.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise OrderConflictError("KITCHEN_INVALID_TRANSITION")
+        self._session.add(OrderStatusHistoryModel(order_id=order.id, **asdict(history)))
+        await flush(self._session)
 
     async def create(self, order: Order) -> Order:
         nested = {

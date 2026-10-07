@@ -310,6 +310,16 @@ class OrderModel(SQLModel, table=True):
         Index("ix_orders_branch_status_created", "branch_id", "status", "created_at"),
         Index("ix_orders_customer_created", "customer_id", "created_at", "id"),
         Index("ix_orders_mode_status", "mode", "status"),
+        Index(
+            "ix_orders_kitchen_queue",
+            "branch_id",
+            "status",
+            "order_number",
+            "id",
+            postgresql_where=text(
+                "status IN ('WAITING', 'PREPARING', 'READY', 'READY_FOR_PICKUP')"
+            ),
+        ),
     )
     id: UUID = Field(
         default_factory=uuid4,
@@ -548,6 +558,9 @@ class OrderStatusHistoryModel(SQLModel, table=True):
             name="ck_order_status_history_to",
         ),
         Index("ix_order_status_history_order_created", "order_id", "created_at", "id"),
+        Index(
+            "ix_order_status_history_entry", "order_id", "to_status", "created_at", "id"
+        ),
     )
     id: UUID = Field(
         default_factory=uuid4,

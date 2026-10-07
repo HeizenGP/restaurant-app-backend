@@ -70,7 +70,15 @@ def test_domain_and_application_do_not_depend_on_external_adapters() -> None:
         "pwdlib",
         "pydantic",
     }
-    for slice_name in ("auth", "customers", "branches", "catalog", "cart", "orders"):
+    for slice_name in (
+        "auth",
+        "customers",
+        "branches",
+        "catalog",
+        "cart",
+        "orders",
+        "kitchen",
+    ):
         for layer in ("domain", "application"):
             root = PROJECT_ROOT / "app" / "modules" / slice_name / layer
             for source in root.rglob("*.py"):

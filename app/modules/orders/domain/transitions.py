@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from app.modules.orders.domain.models import (
     Order,
@@ -9,6 +12,9 @@ from app.modules.orders.domain.models import (
     PaymentStatus,
     aware,
 )
+
+if TYPE_CHECKING:
+    from app.modules.orders.domain.lifecycle import OrderTransitionContext
 
 QUEUE_STATUSES = (OrderStatus.WAITING, OrderStatus.PREPARING)
 
@@ -47,7 +53,9 @@ def allowed_statuses(mode: OrderMode, method: PaymentMethodType) -> set[OrderSta
     return {*flow(mode, method), OrderStatus.CANCELLED}
 
 
-def validate_transition(order: Order, target: OrderStatus) -> None:
+def validate_transition(
+    order: Order | OrderTransitionContext, target: OrderStatus
+) -> None:
     route = flow(order.mode, order.payment_method_type)
     if order.status not in route or order.status == route[-1]:
         raise OrderRuleError("Terminal order cannot transition")

@@ -325,7 +325,7 @@ def test_dependency_failure_is_safe_503(api, monkeypatch):
     assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
 
 
-def test_openapi_has_discriminator_and_no_payment_or_kitchen_write(api):
+def test_orders_openapi_has_discriminator_and_no_payment_or_kitchen_write(api):
     schema = api.client.get("/openapi.json").json()
     request = schema["paths"]["/api/v1/orders"]["post"]["requestBody"]["content"][
         "application/json"
@@ -334,7 +334,11 @@ def test_openapi_has_discriminator_and_no_payment_or_kitchen_write(api):
         request["discriminator"]["propertyName"] == "mode"
         and len(request["oneOf"]) == 3
     )
-    paths = [path for path in schema["paths"] if "orders" in path]
+    paths = [
+        path
+        for path in schema["paths"]
+        if path.startswith(("/api/v1/orders", "/api/v1/admin/orders"))
+    ]
     assert len(paths) == 8
     assert sum(len(schema["paths"][path]) for path in paths) == 14
     assert not any(
