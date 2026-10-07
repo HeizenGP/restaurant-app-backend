@@ -9,6 +9,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from app.modules.auth.domain.models import Principal, PrincipalType
+from app.modules.branches.application.admin_ports import BranchTimezoneSynchronization
 from app.modules.cart.application.errors import CartNotFoundError
 from app.modules.cart.application.services import customer_identity
 from app.modules.orders.application.dtos import OrderCreate
@@ -52,6 +53,7 @@ from app.modules.orders.domain.policies import (
     within_branch_hours,
 )
 from app.modules.orders.domain.transitions import validate_transition
+from app.shared.application.audit import AuditRecord, AuditRecorder
 from app.shared.domain.time import utc_now
 
 
@@ -360,10 +362,17 @@ def money_zero():
 
 class OrderSettingsService:
     def __init__(
-        self, repository: OrderSettingsRepository, authorization: OrderAuthorization
+        self,
+        repository: OrderSettingsRepository,
+        authorization: OrderAuthorization,
+        *,
+        branch_timezones: BranchTimezoneSynchronization | None = None,
+        audit: AuditRecorder | None = None,
     ) -> None:
         self._repository = repository
         self._authorization = authorization
+        self._branch_timezones = branch_timezones
+        self._audit = audit
 
     async def _require(self, principal: Principal, branch_id: UUID) -> None:
         if (
@@ -405,10 +414,32 @@ class OrderSettingsService:
             before = await self._repository.get_settings(
                 branch_id, lock=True, for_update=True
             )
+            await self._require(principal, branch_id)
             allowed = set(asdict(before)) - {"branch_id", "created_at", "updated_at"}
             if not changes or not changes.keys() <= allowed:
                 raise InvalidOrderDataError()
-            return await self._repository.save_settings(replace(before, **changes))
+            updated = replace(before, **changes)
+            if "timezone" in changes and self._branch_timezones is not None:
+                await self._branch_timezones.synchronize_timezone(
+                    branch_id, updated.timezone
+                )
+            result = await self._repository.save_settings(updated)
+            if self._audit is not None:
+                await self._audit.record(
+                    AuditRecord(
+                        actor_user_id=principal.user_id,
+                        branch_id=branch_id,
+                        action="BRANCH_ORDER_SETTINGS_UPDATED",
+                        entity_type="BRANCH_ORDER_SETTINGS",
+                        entity_id=branch_id,
+                        before_state={"timezone": before.timezone},
+                        after_state={
+                            "timezone": result.timezone,
+                            **{f"changed_{key}": True for key in changes},
+                        },
+                    )
+                )
+            return result
 
     async def list_tables(
         self, principal: Principal, branch_id: UUID

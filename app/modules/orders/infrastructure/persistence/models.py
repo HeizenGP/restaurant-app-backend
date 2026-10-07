@@ -310,6 +310,8 @@ class OrderModel(SQLModel, table=True):
         Index("ix_orders_branch_status_created", "branch_id", "status", "created_at"),
         Index("ix_orders_customer_created", "customer_id", "created_at", "id"),
         Index("ix_orders_mode_status", "mode", "status"),
+        Index("ix_orders_admin_branch_created", "branch_id", "created_at", "id"),
+        Index("ix_orders_admin_customer_branch", "customer_id", "branch_id"),
         Index(
             "ix_orders_pickup_release",
             "branch_id",

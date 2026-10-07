@@ -105,6 +105,21 @@ class RolePermissionModel(SQLModel, table=True):
 class UserModel(SQLModel, table=True):
     __tablename__ = "users"
     __table_args__ = (
+        Index(
+            "ix_users_staff_name_prefix",
+            text("lower(first_name || ' ' || coalesce(last_name,'')) text_pattern_ops"),
+        ),
+        Index(
+            "ix_users_staff_lastname_prefix", text("lower(last_name) text_pattern_ops")
+        ),
+        Index(
+            "ix_users_staff_email_prefix", text("lower(email::text) text_pattern_ops")
+        ),
+        Index(
+            "ix_users_staff_phone_prefix",
+            "phone",
+            postgresql_ops={"phone": "varchar_pattern_ops"},
+        ),
         CheckConstraint(
             "email IS NOT NULL OR phone IS NOT NULL",
             name="ck_users_contact_required",

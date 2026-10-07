@@ -29,7 +29,18 @@ def _utc_now() -> datetime:
 
 class CustomerModel(SQLModel, table=True):
     __tablename__ = "customers"
+    # Administrative provenance is not an identity field. Its owning adapter
+    # projects/writes it explicitly; ordinary Auth/checkout mappings stay stable.
+    __mapper_args__ = {"exclude_properties": ["created_by_branch_id"]}
     __table_args__ = (
+        Column(
+            "created_by_branch_id",
+            PG_UUID(as_uuid=True),
+            ForeignKey(
+                "branches.id", ondelete="RESTRICT", name="fk_customers_admin_origin"
+            ),
+            nullable=True,
+        ),
         CheckConstraint(
             "phone ~ '^[+]?[0-9]{9,15}$'",
             name="ck_customers_phone_format",
@@ -37,6 +48,19 @@ class CustomerModel(SQLModel, table=True):
         UniqueConstraint("user_id", name="uq_customers_user_id"),
         UniqueConstraint("phone", name="uq_customers_phone"),
         Index("ix_customers_email", "email"),
+        Index("ix_customers_admin_origin", "created_by_branch_id", "created_at", "id"),
+        Index(
+            "ix_customers_admin_name_prefix", text("lower(full_name) text_pattern_ops")
+        ),
+        Index(
+            "ix_customers_admin_email_prefix",
+            text("lower(email::text) text_pattern_ops"),
+        ),
+        Index(
+            "ix_customers_admin_phone_prefix",
+            "phone",
+            postgresql_ops={"phone": "varchar_pattern_ops"},
+        ),
     )
 
     id: UUID = Field(

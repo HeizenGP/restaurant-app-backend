@@ -9,6 +9,7 @@ from app.modules.branches.application.services import BranchService
 from app.modules.branches.infrastructure.persistence.repositories import (
     SQLAlchemyBranchRepository,
 )
+from app.shared.infrastructure.audit.repository import SQLAlchemyAuditRecorder
 from app.shared.infrastructure.database.dependencies import get_session
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -16,7 +17,9 @@ CurrentPrincipal = Annotated[Principal, Depends(get_current_principal)]
 
 
 def get_branch_service(session: SessionDependency) -> BranchService:
-    return BranchService(SQLAlchemyBranchRepository(session))
+    return BranchService(
+        SQLAlchemyBranchRepository(session), SQLAlchemyAuditRecorder(session)
+    )
 
 
 BranchServiceDependency = Annotated[BranchService, Depends(get_branch_service)]

@@ -99,6 +99,7 @@ def test_metadata_constraints_and_indexes_match_pinned_migration():
         i.name
         for name in PAYMENT_TABLES
         for i in SQLModel.metadata.tables[name].indexes
+        if i.name != "ix_payments_admin_paid"
     }
     assert checks == expected_checks and indexes == expected_indexes
     for name in PAYMENT_TABLES:
@@ -108,6 +109,9 @@ def test_metadata_constraints_and_indexes_match_pinned_migration():
             if hasattr(constraint, "sqltext"):
                 assert str(constraint.sqltext) in sql and str(constraint.sqltext) in ddl
         for index in table.indexes:
+            # Phase 10 owns this later index; its pinned migration tests verify it.
+            if index.name == "ix_payments_admin_paid":
+                continue
             assert (
                 str(CreateIndex(index).compile(dialect=postgresql.dialect())) + ";"
                 in sql

@@ -462,14 +462,16 @@ class SQLAlchemyOrderSettingsRepository:
     async def get_settings(
         self, branch_id: UUID, *, lock: bool = False, for_update: bool = False
     ) -> BranchOrderSettings:
+        branch_timezone = "America/Lima"
         if lock:
             # Branch lock also covers the absence of a settings row. Checkout
             # takes SHARE; admin takes UPDATE. No lock upgrades during checkout.
-            await self._session.execute(
-                select(BranchModel.id)
+            branch_result = await self._session.execute(
+                select(BranchModel.timezone)
                 .where(BranchModel.id == branch_id)
                 .with_for_update(read=not for_update)
             )
+            branch_timezone = branch_result.scalar_one_or_none() or branch_timezone
         query = select(BranchOrderSettingsModel).where(
             BranchOrderSettingsModel.branch_id == branch_id
         )
@@ -478,11 +480,15 @@ class SQLAlchemyOrderSettingsRepository:
         row = (
             await self._session.execute(query.execution_options(populate_existing=True))
         ).scalar_one_or_none()
-        return (
-            entity(row, BranchOrderSettings)
-            if row
-            else BranchOrderSettings(branch_id=branch_id)
-        )
+        if row:
+            return entity(row, BranchOrderSettings)
+        if not lock:
+            branch_timezone = (
+                await self._session.execute(
+                    select(BranchModel.timezone).where(BranchModel.id == branch_id)
+                )
+            ).scalar_one_or_none() or branch_timezone
+        return BranchOrderSettings(branch_id=branch_id, timezone=branch_timezone)
 
     async def save_settings(self, settings: BranchOrderSettings) -> BranchOrderSettings:
         values = asdict(settings)

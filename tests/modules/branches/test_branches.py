@@ -87,6 +87,23 @@ class MemoryBranchRepository:
     ) -> bool:
         return (user_id, branch_id, permission_code) in self.grants
 
+    async def lock_branch(self, branch_id: UUID) -> bool:
+        return branch_id in self.active_ids
+
+    async def other_active_admin_exists(
+        self, branch_id: UUID, assignment_id: UUID
+    ) -> bool:
+        return any(
+            row.id != assignment_id
+            and row.branch_id == branch_id
+            and row.role_code == "ADMIN"
+            and row.is_active
+            and row.ended_at is None
+            and row.assigned_at <= utc_now()
+            and row.user_id in self.assignable
+            for row in self.staff.values()
+        )
+
     async def user_is_assignable(self, user_id: UUID) -> bool:
         return user_id in self.assignable
 
@@ -101,8 +118,12 @@ class MemoryBranchRepository:
             for row in self.staff.values()
         )
 
-    async def list_staff(self, branch_id: UUID) -> list[StaffAssignmentData]:
-        return [row for row in self.staff.values() if row.branch_id == branch_id]
+    async def list_staff(
+        self, branch_id: UUID, limit: int = 50, offset: int = 0
+    ) -> list[StaffAssignmentData]:
+        return [row for row in self.staff.values() if row.branch_id == branch_id][
+            offset : offset + limit
+        ]
 
     async def get_assignment(
         self, branch_id: UUID, assignment_id: UUID

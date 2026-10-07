@@ -18,6 +18,8 @@ asignaciones de delivery, despacho/entrega y revisión humana de retrasos.
 La Fase 8 incorpora cancelaciones y obligaciones de reembolso completo.
 La Fase 9 añade notificaciones in-app, registro de dispositivos, outbox push y
 SSE autenticado para clientes, administración y cocina.
+La Fase 10 añade administración de clientes, personal y sucursales, overview
+de configuración existente y dashboard financiero de solo lectura.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -1917,3 +1919,132 @@ un schema TEST único y elimina solo sus propios objetos al terminar.
 [Informe completo de Fase 9](docs/phase9-report.md) incluye evidencias,
 contratos, límites de privacidad/entrega, archivos y pendientes.
 Sin staging, commit, push ni Fase 10.
+
+## FASE 10 — ADMINISTRATION & DASHBOARD
+
+Implementada en `chore/backend-foundation` por instrucción directa; el nombre
+`feat/admin` del adjunto no provoca un cambio de rama. Fase 9 estaba guardada en
+`6e940f4`. Todos los cambios F10 quedan sin staging, commit ni push.
+
+Customers conserva la identidad comercial; Branches conserva personal,
+sucursales y horarios; Orders conserva su configuración; Admin aporta únicamente
+dashboard y overview de solo lectura. No se duplican User, Customer, Products,
+Orders, Payments ni tablas de configuración. Catalog, Orders, Cancellations y
+Admin realtime existentes se reutilizan.
+
+### API nueva y permisos
+
+Prefijo `/api/v1`; access JWT registrado obligatorio. Permisos se consultan
+actualmente en DB por User activo, assignment vigente, Branch activa y rol BRANCH.
+Seis nuevos permisos, concedidos solo a ADMIN BRANCH; se reutiliza STAFF_MANAGE.
+
+| Métodos | Ruta sin prefijo | Permiso |
+| --- | --- | --- |
+| GET / POST | /admin/branches | BRANCH_VIEW / BRANCH_CREATE |
+| GET / PATCH / DELETE | /admin/branches/{branch_id} | BRANCH_VIEW / BRANCH_MANAGE |
+| GET / PUT | /admin/branches/{branch_id}/hours | BRANCH_VIEW / BRANCH_MANAGE |
+| GET / POST | /admin/branches/{branch_id}/customers | CUSTOMER_VIEW / CUSTOMER_MANAGE |
+| GET / PATCH / DELETE | /admin/branches/{branch_id}/customers/{customer_id} | CUSTOMER_VIEW / CUSTOMER_MANAGE |
+| GET / POST | /admin/branches/{branch_id}/staff | STAFF_MANAGE |
+| PATCH / DELETE | /admin/branches/{branch_id}/staff/{assignment_id} | STAFF_MANAGE |
+| GET | /admin/branches/{branch_id}/staff/candidates | STAFF_MANAGE |
+| GET | /admin/branches/{branch_id}/configuration | BRANCH_VIEW |
+| GET | /admin/dashboard | DASHBOARD_VIEW |
+
+19 operaciones nuevas; aliases de Staff usan el mismo servicio de las rutas
+anteriores. POST 201, DELETE 204, otras 200; errores seguros
+401/403/404/409/422/503. No nuevos grants a CUSTOMER/KITCHEN ni superadmin.
+
+### Clientes, personal y sucursales
+
+Customer es visible por pedido en la Branch o por procedencia administrativa
+`created_by_branch_id` opcional. No se asigna artificialmente una sucursal a
+identidades previas. Listas filtradas en SQL antes de paginar: limit=50
+(1..100), offset=0 (0..10000), search opcional por prefijo literal de 2..80.
+
+Crear contacto produce Guest sin User/contraseña/verificación/JWT.
+Registro y OTP normales promueven el mismo CustomerUUID. Invitado edita
+full_name/email; registrado first_name/last_name/email con actualización
+Customer+User atómica y revocación de verificación email previa si cambia.
+Teléfono y campos de identidad/seguridad no son editables. Nunca se elimina
+Registered; Guest solo se borra si procede de esa Branch y no tiene prueba
+telefónica ni historia/relaciones. Conflictos no destruyen direcciones/OTP.
+
+Candidates requiere search de 2..80, limit=20 (1..100), devuelve únicamente perfil
+seguro de Users ACTIVE/no borrados e indicador already_assigned.
+Staff se desactiva con ended_at y se reactiva solo por un actor autorizado,
+sin borrar User/assignment. Último ADMIN actual no puede desactivarse/demoverse:
+409 LAST_BRANCH_ADMIN, protegido por lock común de Branch y permiso revalidado.
+
+New Branch exige ADMIN activo en otra Branch y crea Branch+7Hours+OrderSettings
+oficiales+assignment ADMIN del creador+audit en una transacción.
+Code uppercase/único/inmutable; timezone IANA; horas locales, siete días,
+overnight permitido y closed con horas NULL. PATCH no acepta is_active/deleted_at.
+DELETE es soft y rechaza operaciones activas, pagos/reconciliación pendientes,
+refunds sin resolver, cancelaciones pendientes y delivery assignments abiertos.
+Branch reactivation opcional no implementada; no existe bypass global de recuperación.
+
+### Configuración y dashboard
+
+GET configuration compone Branch/Hours, BranchOrderSettings, conteos de Tables y
+DeliveryZones aplicables y resumen Catalog. Sin JSON genérico editable.
+Las APIs existentes de Catalog y de Orders/settings/tables/delivery-zones siguen
+siendo los únicos puntos de escritura. Ambos cambios explícitos de timezone
+(Branch y settings legacy) sincronizan los relojes por puertos públicos y
+mismo commit. No reescriben snapshots/horas UTC de pedidos previos.
+
+Dashboard acepta branch_id/from_date/to_date; sin timezone del frontend.
+Día actual por timezone de cada Branch; máximo31 días y100 Branches autorizadas,
+bounds UTC [start,end), DST correcto. Más de100 sin filtro produce422,
+no ventas truncadas. Devuelve summary, sales_by_mode (LOCAL/PICKUP/DELIVERY),
+sales_by_branch con periodos explícitos y top10 productos históricos.
+
+- Gross: SUM Payments.amount PAID por paid_at; no Order.total ni pagos pendientes.
+- Refunds: SUM Refunds.amount REFUNDED por refunded_at, aunque el cobro sea viejo.
+- Net: gross - refunded; puede ser negativo.
+- orders_count: Orders creados por created_at; paid_orders_count: cobros por paid_at.
+- Top: SUM OrderItems.quantity por product_id y snapshot, Orders no CANCELLED.
+
+Una sentencia SQL financiera separa agregados para evitar multiplicar money
+al unir refunds/items; sin N+1, orders materializadas en Python ni float.
+Importes Decimal serializados como strings. No materialized view/BI prematuro.
+SSE de F9 se reutiliza como señal de Orders/refetch; no se promete un evento
+financiero por cada refund ni se crea otro canal realtime.
+
+### Migración, validación y límites
+
+`0010_admin` depende de `0009_notifications`: cero tablas nuevas (50 aplicación/
+51 con Alembic), procedencia Customer nullable RESTRICT, seis permissions,
+doce índices, cuatro funciones/cuatro triggers de gates/coherencia timezone.
+Downgrade rechaza procedencia no NULL antes de DDL para preservar trazabilidad.
+0001–0009 intactas; sin startup migration/create_all/autogenerate/Docker.
+
+~~~bash
+ruff check .
+ruff format --check .
+pytest -q
+pytest tests/modules/admin -q
+pytest tests/modules/customers -q
+pytest tests/modules/branches -q
+pytest tests/test_phase10_migration.py -q
+alembic heads
+alembic history
+git diff --check
+git status --short --branch
+git diff --stat
+# Solo URL TEST dedicada, vacía y distinta de la normal:
+pytest -m integration -q
+~~~
+
+Head de DEFINICIONES: `0010_admin`; no es una afirmación de migración aplicada.
+Sin TEST_DATABASE_URL, PostgreSQL real, locks/trigger parser/EXPLAIN quedan
+SKIPPED. La base normal manual de49 tablas sin versión Alembic sigue intacta
+e incompatible: no ejecutar upgrade/stamp/reset allí sin plan explícito.
+Servidor de desarrollo en [Swagger](http://localhost:8000/docs); arranque y
+OpenAPI no equivalen a validar operaciones contra esa base.
+
+RF-45/47/48 reutilizados; RF-49 implementado. RF-46 PARCIAL:
+Customer/Staff/Branches implementados, Orders previo, Promotions pendiente.
+Sin frontend, exports, inventario, contabilidad ni Fase11.
+[Informe completo y resultados exactos](docs/phase10-report.md) con63 secciones,
+arquitectura, archivos, contratos, pruebas, riesgos y pendientes.

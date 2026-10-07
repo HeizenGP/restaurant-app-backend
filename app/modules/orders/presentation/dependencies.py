@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.domain.models import Principal
 from app.modules.auth.presentation.dependencies import get_current_customer
+from app.modules.branches.infrastructure.order_timezone import (
+    SQLAlchemyBranchTimezoneSynchronization,
+)
 from app.modules.catalog.presentation.dependencies import CatalogServiceDependency
 from app.modules.orders.application.services import OrderService, OrderSettingsService
 from app.modules.orders.infrastructure.authorization import SQLAlchemyOrderAuthorization
@@ -17,6 +20,7 @@ from app.modules.orders.infrastructure.persistence.repositories import (
     SQLAlchemyOrderSettingsRepository,
 )
 from app.modules.orders.infrastructure.scheduling import SQLAlchemyKitchenLoadEstimator
+from app.shared.infrastructure.audit.repository import SQLAlchemyAuditRecorder
 from app.shared.infrastructure.database.dependencies import get_session
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -41,6 +45,8 @@ def get_order_settings_service(session: SessionDependency) -> OrderSettingsServi
     return OrderSettingsService(
         SQLAlchemyOrderSettingsRepository(session),
         SQLAlchemyOrderAuthorization(session),
+        branch_timezones=SQLAlchemyBranchTimezoneSynchronization(session),
+        audit=SQLAlchemyAuditRecorder(session),
     )
 
 

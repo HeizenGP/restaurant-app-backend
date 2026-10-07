@@ -1,6 +1,10 @@
 from fastapi import APIRouter
 
+from app.modules.admin.presentation.router import router as administration_router
 from app.modules.auth.presentation.router import router as auth_router
+from app.modules.branches.presentation.admin_router import (
+    router as admin_branches_router,
+)
 from app.modules.branches.presentation.router import router as branches_router
 from app.modules.cancellations.presentation.router import (
     admin_router as admin_cancellations_router,
@@ -11,6 +15,9 @@ from app.modules.cancellations.presentation.router import (
 from app.modules.cart.presentation.router import router as cart_router
 from app.modules.catalog.presentation.router import admin_router as admin_catalog_router
 from app.modules.catalog.presentation.router import router as catalog_router
+from app.modules.customers.presentation.admin_router import (
+    router as admin_customers_router,
+)
 from app.modules.customers.presentation.router import router as customers_router
 from app.modules.fulfillment.presentation.router import router as fulfillment_router
 from app.modules.health.presentation.router import router as health_router
@@ -58,3 +65,6 @@ router.include_router(refunds_router)
 router.include_router(admin_refunds_router)
 router.include_router(notifications_router)
 router.include_router(admin_realtime_router)
+router.include_router(administration_router)
+router.include_router(admin_branches_router)
+router.include_router(admin_customers_router)

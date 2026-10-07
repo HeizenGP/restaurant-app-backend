@@ -84,6 +84,9 @@ def test_all_constraints_indexes_types_fks_match_pinned_revision():
             if hasattr(constraint, "sqltext"):
                 assert str(constraint.sqltext) in sql and str(constraint.sqltext) in ddl
         for index in table.indexes:
+            # Phase 10 owns this later index; keep the Phase 8 SQL comparison pinned.
+            if index.name == "ix_refunds_admin_refunded":
+                continue
             assert (
                 str(CreateIndex(index).compile(dialect=postgresql.dialect())) + ";"
                 in sql

@@ -64,3 +64,8 @@ class StaffAssignmentResponse(BaseModel):
     is_active: bool
     assigned_at: datetime
     ended_at: datetime | None
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    account_status: str | None = None

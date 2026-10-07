@@ -46,9 +46,20 @@ class StaffAssignmentData:
     is_active: bool
     assigned_at: datetime
     ended_at: datetime | None
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    account_status: str | None = None
 
 
 class BranchRepository(Protocol):
+    async def lock_branch(self, branch_id: UUID) -> bool: ...
+
+    async def other_active_admin_exists(
+        self, branch_id: UUID, assignment_id: UUID
+    ) -> bool: ...
+
     async def list_active(self) -> list[BranchData]: ...
 
     async def get_active(self, branch_id: UUID) -> BranchData | None: ...
@@ -65,7 +76,13 @@ class BranchRepository(Protocol):
         self, user_id: UUID, branch_id: UUID, role_id: int
     ) -> bool: ...
 
-    async def list_staff(self, branch_id: UUID) -> list[StaffAssignmentData]: ...
+    async def list_staff(
+        self, branch_id: UUID, limit: int = 50, offset: int = 0
+    ) -> list[StaffAssignmentData]: ...
+
+    async def staff_candidates(
+        self, branch_id: UUID, search: str, limit: int
+    ) -> list[dict]: ...
 
     async def get_assignment(
         self, branch_id: UUID, assignment_id: UUID

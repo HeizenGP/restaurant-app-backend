@@ -27,6 +27,7 @@ class PaymentModel(SQLModel, table=True):
     __tablename__ = "payments"
     __table_args__ = (
         UniqueConstraint("order_id", name="uq_payments_order"),
+        Index("ix_payments_admin_paid", "status", "paid_at", "order_id"),
         CheckConstraint("method_type IN ('CASH','ONLINE')", name="ck_payments_method"),
         CheckConstraint(
             "status IN ('PENDING','PROCESSING','PAID','FAILED')",

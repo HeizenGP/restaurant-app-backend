@@ -50,6 +50,7 @@ class RefundModel(SQLModel, table=True):
         UniqueConstraint("order_id", name="uq_refunds_order"),
         Index("ix_refunds_queue", "status", "requested_at", "id"),
         Index("ix_refunds_recent", "requested_at", "id"),
+        Index("ix_refunds_admin_refunded", "status", "refunded_at", "order_id"),
     )
     id: UUID = Field(
         default_factory=uuid4,
