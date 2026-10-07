@@ -2048,3 +2048,112 @@ Customer/Staff/Branches implementados, Orders previo, Promotions pendiente.
 Sin frontend, exports, inventario, contabilidad ni Fase11.
 [Informe completo y resultados exactos](docs/phase10-report.md) con63 secciones,
 arquitectura, archivos, contratos, pruebas, riesgos y pendientes.
+
+## FASE 11 — FAVORITES, REVIEWS, RECEIPTS & PROMOTIONS
+
+Implementada en `chore/backend-foundation`, desde Fase 10 `87202f0`, por petición
+directa del usuario. Sin nueva rama, staging, commit ni push. Cuatro slices propios;
+sin God Service customer_extras ni copias de Catalog/Orders/Payments/identidad.
+
+### Funcionalidad y autoridad
+
+Favorites: User registrado, PUT 200/DELETE 204 idempotentes, GET con branch_id y
+catálogo público batch. Guest: 403 REGISTERED_ACCOUNT_REQUIRED. Productos ocultos
+se omiten sin borrar registro; sold-out visible como no disponible.
+
+Reviews: Customer propietario (Registered/Guest), una reseña por Order. Rating
+entero 1..5, comentario plano opcional <=1000. Solo LOCAL/SERVED, PICKUP/PICKED_UP,
+DELIVERY/DELIVERED. Sin edición/borrado. REVIEW_VIEW por Branch con filtros y
+paginación SQL scoped, sin PII en la proyección administrativa.
+
+Receipts: BOLETA/FACTURA sobre Order pagado, ledger Payment PAID e importe
+histórico coincidente; amount/PEN server-owned. FACTURA exige estructura RUC de
+11 dígitos, nombre/dirección. Una solicitud por pedido y fingerprint normalizado.
+Idempotency-Key requerido en request/process, solo hash en almacenamiento.
+RECEIPT_VIEW/MANAGE por Branch. Historia preservada tras cancelación/refund.
+
+RF-55 dominio/gestión implementados; EMISIÓN FISCAL REAL PENDIENTE DE PROVEEDOR.
+FiscalDocumentGateway con issue/lookup; default Unconfigured devuelve 503
+FISCAL_PROVIDER_UNAVAILABLE sin mutar PENDING. No PDF/XML/CDR/serie/número
+fiscal fake. Reserva corta+commit, llamada externa sin transacción, finalización
+atómica. Timeout permanece PROCESSING; mismo key concilia con lookup, no reemite.
+
+Promotions: ruleta gratuita RN-23, campañas por Branch draft/configure/activate,
+terms visibles, cooldown>=0, máximo diario opcional por timezone de Branch,
+vigencia opcional. Prizes product-backed con probability_bps 0..10000,
+SUM activos<=10000, secrets.randbelow(10000) servidor. Resto/exhausted/hidden
+es NO_PRIZE; no normalización de otros premios. Sin cobro, tokens o compra previa.
+Spin idempotente/histórico, Reward único con product_name_snapshot. Expiry lazy,
+sin escritura en GET. Solo ADMIN PROMOTION_REDEEM; retry no duplica audit.
+Permisos VIEW/MANAGE/REDEEM actuales, no desde claims del JWT. No descuentos en Cart.
+
+### API nueva
+
+22 operaciones bajo `/api/v1`; access JWT siempre obligatorio.
+
+| Métodos | Ruta sin prefijo | Autoridad |
+| --- | --- | --- |
+| GET | /favorites?branch_id=UUID | Cuenta registrada |
+| PUT, DELETE | /favorites/{product_id} | Cuenta propietaria |
+| POST, GET | /orders/{order_id}/review | Customer propietario |
+| GET | /admin/reviews/branches/{branch_id} | REVIEW_VIEW |
+| POST, GET | /orders/{order_id}/receipt | Customer propietario |
+| GET | /admin/receipts/branches/{branch_id} | RECEIPT_VIEW |
+| POST | /admin/receipts/branches/{branch_id}/{receipt_id}/process | RECEIPT_MANAGE |
+| GET | /promotions/roulette?branch_id=UUID | CurrentCustomer |
+| POST | /promotions/roulette/spins | CurrentCustomer |
+| GET | /promotions/rewards | Customer propietario |
+| GET, POST | /admin/promotions/branches/{branch_id}/roulette/campaigns | PROMOTION_VIEW / MANAGE |
+| GET, PATCH | /admin/promotions/branches/{branch_id}/roulette/campaigns/{campaign_id} | PROMOTION_VIEW / MANAGE |
+| POST | /admin/promotions/branches/{branch_id}/roulette/campaigns/{campaign_id}/deactivate | PROMOTION_MANAGE |
+| POST | /admin/promotions/branches/{branch_id}/roulette/campaigns/{campaign_id}/prizes | PROMOTION_MANAGE |
+| PATCH, DELETE | /admin/promotions/branches/{branch_id}/roulette/campaigns/{campaign_id}/prizes/{prize_id} | PROMOTION_MANAGE |
+| POST | /admin/promotions/branches/{branch_id}/rewards/{reward_id}/redeem | PROMOTION_REDEEM |
+
+Request/spin/create 201 (también retry), Favorite PUT 200, softDELETE 204, resto 200.
+ErrorResponse 401/403/404/409/422/503; bodies/queries extra_forbid, limit 50 (1..100),
+offset 0 (0..10000). Review/Receipt fechas locales inclusivas opcionales; bounds UTC
+[start,end), sin timezone de frontend ni límite dashboard de 31 días aplicado artificialmente.
+Spin body solo `{"branch_id":"UUID"}`; no outcome/prize/customer/draw/expiry.
+Receipt body solo document_type y destinatario. Códigos y contratos detallados
+en [informe F11](docs/phase11-report.md).
+
+### Migración y validación
+
+`0011_customer_extras` depende de `0010_admin`: nueve tablas nuevas,
+59 aplicación/60 con Alembic, catorce índices, trece triggers, cinco funciones propias.
+Seis permissions solo ADMIN BRANCH, sin grants a CUSTOMER/KITCHEN.
+FK RESTRICT, historial inmutable, fiscal no-delete, sum prob y unique active campaign.
+Downgrade rechaza cualquier dato F11 antes de DELETE/DDL; no modifica fases previas.
+
+~~~bash
+ruff check .
+ruff format --check .
+pytest -q
+pytest tests/modules/favorites -q
+pytest tests/modules/reviews -q
+pytest tests/modules/receipts -q
+pytest tests/modules/promotions -q
+pytest tests/test_phase11_migration.py -q
+alembic heads
+alembic history
+git diff --check
+git status --short --branch
+# Solo TEST_DATABASE_URL dedicada, VACÍA y distinta de la normal:
+pytest -m integration tests/integration/test_phase11_postgresql.py -q
+~~~
+
+Head de definiciones 0011, NO migración aplicada a la base normal.
+No existe TEST_DATABASE_URL: tests PostgreSQL: 6 SKIPPED; parser/locks/carreras reales
+pendientes. La base normal observada en Fase 10 tenía 49 tablas sin Alembic.
+No se modificó; el intento read-only desde WSL en F11 recibió connection refused.
+no upgrade/stamp/reset allí sin plan explícito. Servidor [Swagger](http://localhost:8000/docs)
+activo y 22 operaciones F11 registradas; no demuestra CRUD sobre esa base.
+
+RF-08/56/57/58 y RN-23 implementados. RF-55 separado de emisión legal pendiente.
+RF-46: el gap Promotions de F10 queda cubierto para esta ruleta/rewards; no se
+declara motor general de marketing/descuentos. Informes previos son históricos.
+[Informe completo F11](docs/phase11-report.md), 66 secciones, evidencia y pendientes.
+Validación final: 2511 passed, 18 skipped (PostgreSQL opt-in), sin fallos;
+343 pruebas nuevas F11 aprobadas, Ruff y formato aprobados.
+Sin nueva dependencia, Docker, SSE/push, proveedor inventado, frontend ni Fase 12.

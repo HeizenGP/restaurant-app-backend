@@ -171,7 +171,11 @@ class MemoryCatalogRepository:
         )
 
     async def public_products(
-        self, branch_id: UUID, product_id: UUID | None = None
+        self,
+        branch_id: UUID,
+        product_id: UUID | None = None,
+        *,
+        product_ids: tuple[UUID, ...] | None = None,
     ) -> list[ProductAggregate]:
         rows = sorted(
             self.products.values(),
@@ -187,7 +191,8 @@ class MemoryCatalogRepository:
         return [
             self.aggregate(product, branch_id)
             for product in rows
-            if product_id is None or product.id == product_id
+            if (product_id is None or product.id == product_id)
+            and (product_ids is None or product.id in product_ids)
         ]
 
     async def admin_product(self, product_id: UUID) -> ProductAggregate | None:

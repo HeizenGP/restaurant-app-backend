@@ -42,14 +42,20 @@ def test_single_head_nine_linear_revisions_exact_fifty_metadata_tables():
     assert len(revisions) == 9
     assert revisions[0].down_revision == "0008_cancellations_refunds"
     assert scripts.get_revision("0001_phase1").down_revision is None
-    assert set(SQLModel.metadata.tables) == (
+    historic_tables = (
         PRIOR_TABLES
         | PAYMENT_TABLES
         | FULFILLMENT_TABLES
         | PHASE8_TABLES
         | PHASE9_TABLES
     )
-    assert len(SQLModel.metadata.tables) == 50
+    assert len(historic_tables) == 50
+    assert historic_tables <= set(SQLModel.metadata.tables)
+    prior_output = io.StringIO()
+    command.upgrade(migration_config(prior_output), "0009_notifications", sql=True)
+    assert set(
+        re.findall(r"CREATE TABLE (\w+)", prior_output.getvalue())
+    ) == historic_tables | {"alembic_version"}
 
 
 def test_pinned_four_tables_nine_indexes_constraints_and_identity_match_metadata():

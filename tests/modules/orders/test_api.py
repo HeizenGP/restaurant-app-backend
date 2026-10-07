@@ -339,9 +339,14 @@ def test_orders_openapi_has_discriminator_and_no_payment_or_kitchen_write(api):
         for path in schema["paths"]
         if path.startswith(("/api/v1/orders", "/api/v1/admin/orders"))
         and "/cancellation-requests" not in path
+        and not path.endswith(("/review", "/receipt"))
     ]
     assert len(paths) == 8
     assert sum(len(schema["paths"][path]) for path in paths) == 14
+    # F11 extensions belong to Reviews/Receipts, not Orders lifecycle writes.
+    for suffix in ("review", "receipt"):
+        extension = schema["paths"]["/api/v1/orders/{order_id}/" + suffix]
+        assert set(extension) == {"get", "post"}
     assert not any(
         "mark-paid" in path or "kitchen" in path or "recalculate" in path
         for path in paths

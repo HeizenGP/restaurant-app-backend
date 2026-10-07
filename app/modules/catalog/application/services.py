@@ -185,6 +185,18 @@ class CatalogService:
             raise CatalogNotFoundError("PRODUCT")
         return product
 
+    async def product_batch(
+        self, branch_id: UUID, product_ids: tuple[UUID, ...]
+    ) -> tuple[PublicProduct, ...]:
+        """Owned public pricing projection; one bounded batch, no per-product IO."""
+        await self._require_branch(branch_id)
+        if not product_ids:
+            return ()
+        records = await self._repository.public_products(
+            branch_id, product_ids=product_ids
+        )
+        return tuple(p for a in records if (p := self._public(a)) is not None)
+
     @staticmethod
     def _public(aggregate: ProductAggregate) -> PublicProduct | None:
         product, category = aggregate.product, aggregate.category

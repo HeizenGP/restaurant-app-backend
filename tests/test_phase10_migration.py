@@ -30,15 +30,21 @@ def upgrade_sql():
 
 def test_phase10_one_linear_head_zero_new_tables_and_nullable_origin_restrict():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == ["0010_admin"]
-    assert len(list(scripts.walk_revisions())) == 10
+    assert len(scripts.get_heads()) == 1
+    assert len(list(scripts.walk_revisions(base="base", head="0010_admin"))) == 10
     assert scripts.get_revision("0010_admin").down_revision == "0009_notifications"
     sql = upgrade_sql()
     assert "CREATE TABLE" not in sql and "DROP TABLE" not in sql
     assert "ADD COLUMN created_by_branch_id UUID" in sql
     assert "REFERENCES branches (id) ON DELETE RESTRICT" in sql
     assert "UPDATE customers" not in sql
-    assert len(SQLModel.metadata.tables) == 50
+    prior_output = io.StringIO()
+    command.upgrade(migration_config(prior_output), "0010_admin", sql=True)
+    prior_tables = set(re.findall(r"CREATE TABLE (\w+)", prior_output.getvalue())) - {
+        "alembic_version"
+    }
+    assert len(prior_tables) == 50
+    assert prior_tables <= set(SQLModel.metadata.tables)
     column = SQLModel.metadata.tables["customers"].c.created_by_branch_id
     assert column.nullable and next(iter(column.foreign_keys)).ondelete == "RESTRICT"
 

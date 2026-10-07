@@ -12,6 +12,7 @@ from app.modules.cancellations.infrastructure.persistence import (
 from app.modules.cart.infrastructure.persistence import models as cart_models
 from app.modules.catalog.infrastructure.persistence import models as catalog_models
 from app.modules.customers.infrastructure.persistence import models as customer_models
+from app.modules.favorites.infrastructure.persistence import models as favorite_models
 from app.modules.fulfillment.infrastructure.persistence import (
     models as fulfillment_models,
 )
@@ -23,6 +24,9 @@ from app.modules.payments.infrastructure.persistence import models as payment_mo
 from app.modules.payments.infrastructure.persistence import (
     refund_models,
 )
+from app.modules.promotions.infrastructure.persistence import models as promotion_models
+from app.modules.receipts.infrastructure.persistence import models as receipt_models
+from app.modules.reviews.infrastructure.persistence import models as review_models
 from app.shared.infrastructure.audit import models as audit_models
 from app.shared.infrastructure.config.settings import get_settings
 from app.shared.infrastructure.database.engine import create_database_engine
@@ -43,6 +47,10 @@ _PERSISTENCE_MODEL_MODULES = (
     fulfillment_models,
     notification_models,
     audit_models,
+    favorite_models,
+    review_models,
+    receipt_models,
+    promotion_models,
 )
 target_metadata = SQLModel.metadata
 settings = get_settings()

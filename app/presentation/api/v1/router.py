@@ -19,6 +19,7 @@ from app.modules.customers.presentation.admin_router import (
     router as admin_customers_router,
 )
 from app.modules.customers.presentation.router import router as customers_router
+from app.modules.favorites.presentation.router import router as favorites_router
 from app.modules.fulfillment.presentation.router import router as fulfillment_router
 from app.modules.health.presentation.router import router as health_router
 from app.modules.kitchen.presentation.router import router as kitchen_router
@@ -43,6 +44,16 @@ from app.modules.payments.presentation.router import (
     admin_router as admin_payments_router,
 )
 from app.modules.payments.presentation.router import router as payments_router
+from app.modules.promotions.presentation.router import (
+    admin_router as admin_promotions_router,
+)
+from app.modules.promotions.presentation.router import router as promotions_router
+from app.modules.receipts.presentation.router import (
+    admin_router as admin_receipts_router,
+)
+from app.modules.receipts.presentation.router import router as receipts_router
+from app.modules.reviews.presentation.router import admin_router as admin_reviews_router
+from app.modules.reviews.presentation.router import router as reviews_router
 
 router = APIRouter()
 router.include_router(health_router)
@@ -68,3 +79,10 @@ router.include_router(admin_realtime_router)
 router.include_router(administration_router)
 router.include_router(admin_branches_router)
 router.include_router(admin_customers_router)
+router.include_router(favorites_router)
+router.include_router(reviews_router)
+router.include_router(admin_reviews_router)
+router.include_router(receipts_router)
+router.include_router(admin_receipts_router)
+router.include_router(promotions_router)
+router.include_router(admin_promotions_router)
