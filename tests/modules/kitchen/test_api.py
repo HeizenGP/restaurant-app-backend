@@ -286,7 +286,14 @@ def test_actual_session_boundary_sanitizes_database_connection_failure(api):
 def test_no_generic_status_cancel_payment_or_fulfillment_routes(api):
     paths = api.client.get("/openapi.json").json()["paths"]
     kitchen = {path for path in paths if "/kitchen/" in path}
-    assert len(kitchen) == 4
+    stream = "/api/v1/kitchen/branches/{branch_id}/orders/stream"
+    assert kitchen - {stream} == {
+        "/api/v1/kitchen/branches/{branch_id}/queue",
+        "/api/v1/kitchen/branches/{branch_id}/orders/{order_id}",
+        "/api/v1/kitchen/branches/{branch_id}/orders/{order_id}/start-preparation",
+        "/api/v1/kitchen/branches/{branch_id}/orders/{order_id}/mark-ready",
+    }
+    assert set(paths[stream]) == {"get"}  # F9 adds a signal, not a new mutation.
     assert {method for path in kitchen for method in paths[path]} == {"get", "post"}
     for suffix in (
         "/cancel",

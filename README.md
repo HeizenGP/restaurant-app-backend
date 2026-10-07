@@ -15,6 +15,9 @@ La Fase 6 añade el ledger financiero, confirmación de efectivo y orquestación
 online con webhook verificado mediante un puerto de proveedor todavía no elegido.
 La Fase 7 añade liberación de recojos programados, entrega con identidad histórica,
 asignaciones de delivery, despacho/entrega y revisión humana de retrasos.
+La Fase 8 incorpora cancelaciones y obligaciones de reembolso completo.
+La Fase 9 añade notificaciones in-app, registro de dispositivos, outbox push y
+SSE autenticado para clientes, administración y cocina.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -32,6 +35,9 @@ asignaciones de delivery, despacho/entrega y revisión humana de retrasos.
 > Fase 6 se implementa en esa misma rama, aunque el adjunto indique feat/payments.
 > Fase 6 fue guardada en ff8f304. Fase 7 continúa en la misma rama por instrucción
 > directa, aunque el adjunto mencione feat/fulfillment. Los cambios de Fase 7
+> quedan sin staging, commit ni push.
+> Fase 8 fue guardada por el usuario en 87ec588. Fase 9 mantiene esta rama por
+> instrucción directa, aunque el adjunto mencione feat/notifications; sus cambios
 > quedan sin staging, commit ni push.
 
 ## Alcance de la Fase 1
@@ -1790,8 +1796,124 @@ Integración solo con TEST_DATABASE_URL explícita, dedicada/vacía y distinta d
 normal. Si falta, skip explícito; memoria/SQL compilado no equivale a PostgreSQL
 real ni carreras entre conexiones. No aplicar sobre la base manual incompatible
 ni stamp/autogenerate/reconciliar automáticamente.
-Sin proveedor real no se mueve dinero bancario. Notificaciones y Fase 9 pendientes.
+Sin proveedor real no se mueve dinero bancario. Notificaciones se añaden en Fase 9.
 
 [Informe completo de Fase 8](docs/phase8-report.md): arquitectura, archivos,
 13 operaciones, invariantes, evidencias y límites. Misma rama
 chore/backend-foundation, sin staging/commit/push.
+
+## FASE 9 — NOTIFICATIONS & REALTIME
+
+In-app y SSE implementados en `chore/backend-foundation`. Push orchestration
+implementada; entrega móvil real pendiente de proveedor y despliegue de worker.
+Sin FCM/APNs ficticio, SDK nuevo, worker infinito ni tareas en lifespan.
+
+Orders conserva el estado/historial y Fulfillment los incidentes de retraso.
+Triggers PostgreSQL generan eventos durables, notificaciones y push outbox
+en la misma transacción. Ningún servicio de negocio llama NotificationService.
+Siete tipos RF-53: recibido, preparación, listo LOCAL/DELIVERY, listo para recojo,
+en camino, entregado DELIVERY y retraso desde un incidente existente.
+WAITING, SCHEDULED, CANCELLED, SERVED, PICKED_UP, pagos y reembolsos no añaden
+notificaciones al cliente; cambios de status/payment_status sí generan señales SSE.
+
+### API de Fase 9
+
+Prefijo `/api/v1`; Authorization Bearer obligatorio, identidad actual y permisos
+consultados en DB. Invitados y registrados usan su Customer estable.
+ORDER_REALTIME_VIEW solo ADMIN BRANCH; cocina reutiliza KITCHEN_VIEW.
+
+| Método | Ruta sin prefijo | Acceso |
+| --- | --- | --- |
+| GET | /notifications | Customer propietario |
+| GET | /notifications/unread-count | Customer propietario |
+| POST | /notifications/{notification_id}/read | Customer propietario |
+| POST | /notifications/read-all | Customer propietario |
+| GET | /notifications/stream | Customer propietario |
+| PUT / DELETE | /notifications/devices/{installation_id} | Customer, reglas de reasignación |
+| GET | /admin/realtime/branches/{branch_id}/orders | ORDER_REALTIME_VIEW |
+| GET | /admin/realtime/branches/{branch_id}/orders/events | ORDER_REALTIME_VIEW |
+| GET | /admin/realtime/branches/{branch_id}/orders/stream | ORDER_REALTIME_VIEW |
+| GET | /kitchen/branches/{branch_id}/orders/stream | KITCHEN_VIEW |
+
+Lista: `limit=50` (1..100), `before_sequence_id` descendente; devuelve
+`items`, `latest_sequence_id`, `next_before_sequence_id`.
+Lectura idempotente, primer read_at irreversible; read-all devuelve marked_count.
+El unread es COUNT SQL por propietario. Leer no cancela push ni cambia Orders.
+Admin snapshot: limit 100 (1..200), status opcional, after_order_number; por
+defecto ocho estados activos y cursor latest_event_id tomado antes de los datos.
+Eventos: after_id 0, limit 100 (1..200), orden ascendente.
+Errores 401/403/404/409/422/503 con envelope seguro. Bodies/queries extra_forbid.
+
+PUT device devuelve 200 y acepta exclusivamente:
+`{"platform":"ANDROID","provider_code":"<proveedor-configurado>","push_token":"<token-SDK>"}`.
+IOS también permitido. Provider vacío/no configurado: 503 antes de escrituras.
+Instalación UUID estable: PUT repetible, rotación sin duplicar device,
+DELETE propietario 204 lógico/idempotente. Token nunca aparece en responses/logs.
+Reasignación/rotación cancela outbox no enviado, incrementa generación y no
+reenvía historia. Un lease de envío activo bloquea cambio significativo con
+409 NOTIFICATION_DEVICE_BUSY. DELETE conserva la barrera hasta vencer el lease.
+Un dispositivo nuevo no recibe push retroactivo.
+
+### SSE y reconexión
+
+`text/event-stream`, ready, IDs durables, heartbeat comentario cada 15 s,
+poll 1 s, lotes 100; revalida identidad/permisos cada 15 s y entre filas si
+el consumidor es lento. Cierra al desconectar, expirar JWT o cumplir 300 s;
+el cliente reconecta. Sin transacciones/conexiones DB abiertas durante la espera.
+No se admite access_token en URL.
+
+`after_id` explícito prevalece sobre `Last-Event-ID`; ambos son BIGINT >= 0.
+Con cursor se reproduce solo el ámbito autorizado; ready conserva ese cursor.
+Sin cursor inicia desde MAX comprometido de ese ámbito y ready incluye
+resync_required=true: refrescar snapshot/lista/queue después de ready.
+Los gaps son válidos, no hay purga/backfill automático.
+Un advisory lock transaccional antes de asignar IDs evita que un commit tardío
+quede por debajo de un cursor ya consumido; serialización global MVP documentada.
+
+REST es la fuente de verdad, SSE una señal de cambio. Flutter: listar/unread,
+abrir customer SSE con latest_sequence_id, deduplicar IDs y refrescar.
+Admin: snapshot y stream con latest_event_id. Cocina: cola existente y stream;
+sin cursor, refrescar cola tras ready para cerrar la ventana de arranque.
+Tras reconexión enviar último ID; si no se conserva, refrescar estado completo.
+
+### Outbox, migración y pruebas
+
+PushGateway + registry sin proveedor productivo. Dispatcher interno reserva
+FOR UPDATE SKIP LOCKED en transacciones cortas, commit, envío externo y resultado
+fenced por claim_token/generación. Timeout de envío 30 s, lease 120 s;
+máximo cinco intentos; backoff
+30/120/600/1800 s entre intentos, sin sexto. INVALID_TOKEN desactiva device y
+cancela envíos restantes; errores externos no se guardan como texto libre.
+Clave externa estable por delivery UUID; entrega externa es al menos una vez,
+no exactamente una vez sin deduplicación del proveedor/cliente.
+
+0009_notifications depende de 0008_cancellations_refunds: cuatro tablas
+(realtime_order_events, customer_notifications, notification_devices,
+notification_push_deliveries), nueve índices, nueve triggers y siete funciones.
+50 tablas de aplicación, 51 con alembic_version; FK RESTRICT, identidades
+BIGINT ALWAYS, unicidad source/kind y notification/device, históricos inmutables.
+Reutiliza updated_at de Fase 1 en dos tablas; 0001–0008 intactas.
+Downgrade rechaza cualquier dato F9 antes de DDL. Sin cambios en startup/Docker.
+
+~~~bash
+ruff check .
+ruff format --check .
+pytest -q
+pytest tests/modules/notifications -q
+pytest tests/test_phase9_migration.py -q
+alembic heads
+alembic history
+git diff --check
+git status --short --branch
+git diff --stat
+# Solo TEST_DATABASE_URL dedicada/vacía/distinta de normal:
+pytest -m integration -q
+~~~
+
+No ejecutar migración/stamp/autogenerate sobre la base normal manual incompatible.
+Sin TEST_DATABASE_URL, integración omitida explícitamente; tests en memoria y
+SQL compilado no sustituyen PostgreSQL real. El test de concurrencia real prepara
+un schema TEST único y elimina solo sus propios objetos al terminar.
+[Informe completo de Fase 9](docs/phase9-report.md) incluye evidencias,
+contratos, límites de privacidad/entrega, archivos y pendientes.
+Sin staging, commit, push ni Fase 10.

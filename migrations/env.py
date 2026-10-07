@@ -15,6 +15,9 @@ from app.modules.customers.infrastructure.persistence import models as customer_
 from app.modules.fulfillment.infrastructure.persistence import (
     models as fulfillment_models,
 )
+from app.modules.notifications.infrastructure.persistence import (
+    models as notification_models,
+)
 from app.modules.orders.infrastructure.persistence import models as order_models
 from app.modules.payments.infrastructure.persistence import models as payment_models
 from app.modules.payments.infrastructure.persistence import (
@@ -38,6 +41,7 @@ _PERSISTENCE_MODEL_MODULES = (
     cancellation_models,
     refund_models,
     fulfillment_models,
+    notification_models,
     audit_models,
 )
 target_metadata = SQLModel.metadata
