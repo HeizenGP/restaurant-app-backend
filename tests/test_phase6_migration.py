@@ -38,17 +38,16 @@ def upgrade_sql():
     return output.getvalue()
 
 
-def test_phase6_is_the_sole_linear_head():
+def test_phase6_remains_in_the_linear_chain():
     script = ScriptDirectory.from_config(migration_config())
-    assert script.get_heads() == ["0006_payments"]
+    assert script.get_revision("0006_payments") is not None
     assert script.get_revision("0006_payments").down_revision == "0005_kitchen"
-    assert len(list(script.walk_revisions())) == 6
+    assert script.get_revision("0001_phase1").down_revision is None
 
 
 def test_current_metadata_contains_four_new_financial_tables():
     assert payment_models
-    assert set(SQLModel.metadata.tables) == PRIOR_TABLES | PAYMENT_TABLES
-    assert len(SQLModel.metadata.tables) == 38
+    assert PRIOR_TABLES | PAYMENT_TABLES <= set(SQLModel.metadata.tables)
     for name, column in (
         ("payments", "amount"),
         ("payment_attempts", "amount"),

@@ -147,6 +147,32 @@ class SQLAlchemyBranchRepository:
         )
         return (await self._session.execute(query)).scalar_one_or_none() is not None
 
+    async def staff_is_active(
+        self, user_id: UUID, branch_id: UUID, now: datetime
+    ) -> bool:
+        """Branch-scoped staff eligibility; hold SHARE through caller commit."""
+        query = (
+            select(StaffAssignmentModel.id)
+            .join(UserModel, UserModel.id == StaffAssignmentModel.user_id)
+            .join(BranchModel, BranchModel.id == StaffAssignmentModel.branch_id)
+            .join(RoleModel, RoleModel.id == StaffAssignmentModel.role_id)
+            .where(
+                StaffAssignmentModel.user_id == user_id,
+                StaffAssignmentModel.branch_id == branch_id,
+                StaffAssignmentModel.is_active.is_(True),
+                StaffAssignmentModel.assigned_at <= now,
+                StaffAssignmentModel.ended_at.is_(None),
+                UserModel.account_status == "ACTIVE",
+                UserModel.deleted_at.is_(None),
+                BranchModel.is_active.is_(True),
+                BranchModel.deleted_at.is_(None),
+                RoleModel.scope == "BRANCH",
+            )
+            .limit(1)
+            .with_for_update(read=True, of=(StaffAssignmentModel, UserModel))
+        )
+        return (await self._session.execute(query)).scalar_one_or_none() is not None
+
     async def get_branch_role(self, role_code: str) -> BranchRoleData | None:
         row = await self._session.execute(
             select(RoleModel).where(

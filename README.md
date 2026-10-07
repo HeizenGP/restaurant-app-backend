@@ -13,6 +13,8 @@ La Fase 5 añade la cola de cocina, preparación, tiempos y transiciones auditad
 sobre el estado y el historial existentes de Orders.
 La Fase 6 añade el ledger financiero, confirmación de efectivo y orquestación
 online con webhook verificado mediante un puerto de proveedor todavía no elegido.
+La Fase 7 añade liberación de recojos programados, entrega con identidad histórica,
+asignaciones de delivery, despacho/entrega y revisión humana de retrasos.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -28,7 +30,9 @@ online con webhook verificado mediante un puerto de proveedor todavía no elegid
 > El usuario guardó Fase 4 en 7201466. Fase 5 quedó consolidada en
 > **chore/backend-foundation**, commit 43af19e. Por instrucción directa,
 > Fase 6 se implementa en esa misma rama, aunque el adjunto indique feat/payments.
-> Los cambios de Fase 6 quedan sin staging, commit ni push.
+> Fase 6 fue guardada en ff8f304. Fase 7 continúa en la misma rama por instrucción
+> directa, aunque el adjunto mencione feat/fulfillment. Los cambios de Fase 7
+> quedan sin staging, commit ni push.
 
 ## Alcance de la Fase 1
 
@@ -148,6 +152,14 @@ app/
 │   │   │   ├── orders.py
 │   │   │   └── persistence/
 │   │   └── presentation/
+│   ├── fulfillment/
+│   │   ├── domain/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   │   ├── authorization.py
+│   │   │   ├── orders.py
+│   │   │   └── persistence/
+│   │   └── presentation/
 │   └── health/
 │       ├── application/
 │       ├── infrastructure/
@@ -163,7 +175,8 @@ migrations/
     ├── 0003_create_cart.py
     ├── 0004_create_orders.py
     ├── 0005_create_kitchen.py
-    └── 0006_create_payments.py
+    ├── 0006_create_payments.py
+    └── 0007_create_fulfillment.py
 ~~~
 
 Lifespan crea un único engine y una fábrica de sesiones. Cada petición recibe
@@ -1548,3 +1561,134 @@ en una base compatible administrada y revisada.
 Se conserva chore/backend-foundation, sin staging/commit/push.
 No Fase 7, scheduler PICKUP, caja contable, refunds, pagos parciales,
 cancelaciones, conciliación automática, notificaciones ni entrega.
+
+## Fase 7 — Fulfillment: delivery y recojo programado
+
+Orders conserva el único estado operacional y order_status_history. Fulfillment
+usa un contrato público mínimo de Orders para cuatro acciones explícitas,
+autorización de Branches y el grabador de auditoría compartido. No llama a
+Payments/Kitchen/Cart/Catalog ni accede a métodos privados de sus repositorios.
+Kitchen continúa siendo el único responsable de PREPARING y READY/READY_FOR_PICKUP.
+Todas las operaciones de esta fase exigen ONLINE, PAID y confirmed_at del backend.
+
+### Recojos
+
+La recomendación se calcula desde requested_pickup_at, settings actuales y el
+conteo actual WAITING/PREPARING de la sucursal:
+
+~~~text
+estimated_ready_at = requested_pickup_at - pickup_buffer_minutes
+recommended_release_at = estimated_ready_at
+                         - default_prep_minutes
+                         - queue_depth * queue_delay_per_order_minutes
+~~~
+
+No reemplaza calculated_kitchen_release_at ni estimated_ready_at históricos.
+GET muestra ambas referencias, minutos hasta liberar e is_due, sin escribir.
+SCHEDULED → WAITING solo desde la recomendación actual; antes devuelve 409
+PICKUP_NOT_DUE. El lote de hasta 100 usa una sola foto de cola y FOR UPDATE OF
+orders SKIP LOCKED; cada pedido liberado queda auditado en Orders con actor,
+fecha y motivo. Pedidos bloqueados se revisan en el siguiente ciclo.
+
+READY_FOR_PICKUP → PICKED_UP exige nombre y teléfono completos contra los
+snapshots originales. El nombre ignora mayúsculas y espacios repetidos; el
+teléfono admite + y separadores de formato, no sufijos ni país inferido. No se
+guarda el input de identidad, ni se sustituye por datos del perfil actual.
+
+PICKUP SCHEDULING LOGIC: IMPLEMENTADA.
+AUTOMATIC PERIODIC WORKER: NO IMPLEMENTADO / PREPARADO PARA INTEGRACIÓN.
+READY_FOR_PICKUP STATE: IMPLEMENTADO.
+PUSH NOTIFICATION: PENDIENTE.
+
+### Delivery y retrasos
+
+La cola muestra WAITING/PREPARING/READY/OUT_FOR_DELIVERY de la sucursal, snapshots
+de dirección y ETA comprometida. Asignar/reasignar/desasignar requiere personal
+activo de esa sucursal; no se crea rol DRIVER. Reasignar cierra el registro
+anterior, no lo elimina. Solo hay una asignación activa por Order.
+
+READY → OUT_FOR_DELIVERY exige asignación activa y revalida el personal asignado.
+OUT_FOR_DELIVERY → DELIVERED es explícito, conserva historia y cierra la
+asignación atómicamente. No se permite reasignar una entrega ya despachada.
+Completar sigue autorizado para ADMIN aunque el repartidor haya sido desactivado
+después del despacho. No altera tarifas, total, dirección ni ETA histórica.
+
+Retraso es estrictamente referencia > ETA + 15 minutos: exactamente 15 no basta.
+La referencia es reloj backend si está activo y la fecha histórica DELIVERED si
+terminó; consultar días después no crea un retraso artificial. Un historial
+DELIVERED ausente/ambiguo se rechaza de forma segura.
+
+POST detect crea como máximo una incidencia OPEN por Order, con evidencia
+inmutable. GET nunca crea incidencias. Aprobar/rechazar requiere acción humana;
+customer_responsibility es bool/null explícito, sin inferencia ni compensación
+financiera. APPROVED exige descripción; REJECTED no la acepta. Reintento idéntico
+del mismo evaluador es idempotente; una decisión diferente devuelve 409.
+
+### Endpoints y permisos
+
+Prefijo común: /api/v1/admin/fulfillment/branches/{branch_id}.
+
+| Método | Sufijo | Permiso |
+| --- | --- | --- |
+| GET | /pickup/due | FULFILLMENT_VIEW |
+| POST | /pickup/release-due | FULFILLMENT_MANAGE |
+| POST | /pickup/orders/{order_id}/release | FULFILLMENT_MANAGE |
+| POST | /pickup/orders/{order_id}/complete | FULFILLMENT_MANAGE |
+| GET | /delivery/queue | FULFILLMENT_VIEW |
+| PUT | /delivery/orders/{order_id}/assignment | DELIVERY_ASSIGN |
+| DELETE | /delivery/orders/{order_id}/assignment | DELIVERY_ASSIGN |
+| POST | /delivery/orders/{order_id}/dispatch | FULFILLMENT_MANAGE |
+| POST | /delivery/orders/{order_id}/complete | FULFILLMENT_MANAGE |
+| POST | /delivery/delays/detect | DELIVERY_DELAY_REVIEW |
+| GET | /delivery/delays | FULFILLMENT_VIEW |
+| POST | /delivery/delays/{incident_id}/approve | DELIVERY_DELAY_REVIEW |
+| POST | /delivery/delays/{incident_id}/reject | DELIVERY_DELAY_REVIEW |
+
+Solo ADMIN BRANCH recibe estos cuatro permisos; no KITCHEN/CUSTOMER. JWT real y
+usuario activo se consultan en cada petición, sin confiar en roles del token.
+Consulta de recursos fuera de una sucursal autorizada devuelve 404. Body/query
+extras dan 422; precio, estado, actor, dirección, schedule y ETA no son inputs.
+
+Listados: limit 1..100 (50 por defecto), offset >= 0. La cola filtra status solo
+por los cuatro estados operacionales. Incidencias filtran OPEN/APPROVED/REJECTED.
+Detección usa limit y after_order_number (0 inicial): seguir next_order_number
+hasta null, y volver a 0 en el siguiente ciclo para reevaluar pedidos antiguos.
+Los segundos positivos fraccionarios se redondean hacia arriba (900.1 → 901),
+con saturación a INT32; la comparación del umbral usa fechas sin redondeo.
+
+### Migración y ejecución segura
+
+0007_fulfillment depende de 0006_payments y crea delivery_assignments y
+delivery_delay_incidents: 40 tablas de aplicación, 41 con alembic_version.
+Incluye UNIQUE parcial de asignación activa, UNIQUE de incidencia por Order,
+checks de evidencia/evaluación, seis índices y trigger updated_at compartido.
+Se reutilizan los índices existentes de la cola de Orders, sin duplicarlos.
+Downgrade aborta antes de cualquier DDL si hay historia de fulfillment.
+Migraciones 0001–0006 intactas; sin create_all ni cambios en startup/lifespan.
+
+~~~bash
+ruff check .
+ruff format --check .
+pytest -q
+pytest tests/modules/fulfillment -q
+pytest tests/test_phase7_migration.py -q
+pytest tests/integration/test_phase7_postgresql.py -m integration -q
+alembic heads
+alembic history
+git diff --check
+~~~
+
+La integración usa exclusivamente TEST_DATABASE_URL, PostgreSQL dedicado y vacío
+distinto de la base normal; revierte DDL y datos. Sin esa variable se omite y no
+se declara validación PostgreSQL real. Las carreras probadas en memoria no
+sustituyen contención real entre conexiones. La base manual incompatible se
+preserva: no upgrade/stamp/autogenerate destructivo ni reconciliación automática.
+
+No scheduler instalado ni bucle en lifespan. Un worker futuro debe invocar los
+casos de uso con un actor y permisos vigentes, cerrar su sesión por lote y seguir
+el cursor de detección. No se entrega mapa/GPS, proveedor de delivery, refunds,
+cupones, stock, notificaciones ni Fase 8.
+
+[Informe de Fase 7](docs/phase7-report.md): alcance, arquitectura, archivos,
+13 operaciones, pruebas, límites y pendientes. Misma rama chore/backend-foundation,
+sin staging, commit ni push por el agente.

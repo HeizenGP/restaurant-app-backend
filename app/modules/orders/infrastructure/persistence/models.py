@@ -311,6 +311,15 @@ class OrderModel(SQLModel, table=True):
         Index("ix_orders_customer_created", "customer_id", "created_at", "id"),
         Index("ix_orders_mode_status", "mode", "status"),
         Index(
+            "ix_orders_pickup_release",
+            "branch_id",
+            "order_number",
+            "id",
+            postgresql_where=text(
+                "mode = 'PICKUP' AND status = 'SCHEDULED' AND payment_status = 'PAID'"
+            ),
+        ),
+        Index(
             "ix_orders_kitchen_queue",
             "branch_id",
             "status",
