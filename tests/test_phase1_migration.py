@@ -18,9 +18,9 @@ def migration_config(output: io.StringIO | None = None) -> Config:
     return config
 
 
-def test_migration_has_one_real_phase_one_head() -> None:
+def test_phase_one_revision_remains_the_base_of_the_chain() -> None:
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == ["0001_phase1"]
+    assert scripts.get_revision("0001_phase1") is not None
     revision = scripts.get_revision("0001_phase1")
     assert revision is not None
     assert revision.down_revision is None
@@ -28,7 +28,7 @@ def test_migration_has_one_real_phase_one_head() -> None:
 
 def test_offline_upgrade_creates_only_phase_one_objects_non_destructively() -> None:
     output = io.StringIO()
-    command.upgrade(migration_config(output), "head", sql=True)
+    command.upgrade(migration_config(output), "0001_phase1", sql=True)
     sql = output.getvalue()
     created = set(re.findall(r"CREATE TABLE (\w+)", sql))
 
@@ -61,8 +61,16 @@ def test_offline_downgrade_does_not_remove_shared_extensions() -> None:
 
 
 def test_domain_and_application_do_not_depend_on_external_adapters() -> None:
-    forbidden = {"fastapi", "sqlmodel", "sqlalchemy", "asyncpg", "jwt", "pwdlib"}
-    for slice_name in ("auth", "customers", "branches"):
+    forbidden = {
+        "fastapi",
+        "sqlmodel",
+        "sqlalchemy",
+        "asyncpg",
+        "jwt",
+        "pwdlib",
+        "pydantic",
+    }
+    for slice_name in ("auth", "customers", "branches", "catalog"):
         for layer in ("domain", "application"):
             root = PROJECT_ROOT / "app" / "modules" / slice_name / layer
             for source in root.rglob("*.py"):

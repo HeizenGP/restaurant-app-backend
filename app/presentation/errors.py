@@ -13,6 +13,7 @@ from app.shared.application.exceptions import (
     DependencyUnavailableError,
     ForbiddenError,
     NotFoundError,
+    RequestDataError,
     TooManyRequestsError,
     UnauthorizedError,
 )
@@ -72,6 +73,8 @@ async def application_error_handler(
         status_code = 409
     elif isinstance(exc, TooManyRequestsError):
         status_code = 429
+    elif isinstance(exc, RequestDataError):
+        status_code = 422
     elif isinstance(exc, DependencyUnavailableError):
         status_code = 503
     return error_response(status_code, exc.code, exc.message, headers=headers)

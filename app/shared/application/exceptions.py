@@ -14,6 +14,12 @@ class UnauthorizedError(ApplicationError):
     code = "AUTHENTICATION_REQUIRED"
 
 
+class RequestDataError(ApplicationError):
+    """Input violates a rule that needs current persisted context."""
+
+    code = "INVALID_REQUEST_DATA"
+
+
 class ForbiddenError(ApplicationError):
     """The authenticated principal cannot perform the operation."""
 

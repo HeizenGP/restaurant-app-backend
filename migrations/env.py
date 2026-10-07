@@ -6,14 +6,22 @@ from sqlmodel import SQLModel
 
 from app.modules.auth.infrastructure.persistence import models as auth_models
 from app.modules.branches.infrastructure.persistence import models as branch_models
+from app.modules.catalog.infrastructure.persistence import models as catalog_models
 from app.modules.customers.infrastructure.persistence import models as customer_models
+from app.shared.infrastructure.audit import models as audit_models
 from app.shared.infrastructure.config.settings import get_settings
 from app.shared.infrastructure.database.engine import create_database_engine
 from app.shared.infrastructure.logging.config import configure_logging
 
 # Referencing the modules documents and preserves the imports that register every
-# Phase 1 table on SQLModel.metadata before Alembic inspects it.
-_PHASE_ONE_MODEL_MODULES = (auth_models, branch_models, customer_models)
+# persistence table on SQLModel.metadata before Alembic inspects it.
+_PERSISTENCE_MODEL_MODULES = (
+    auth_models,
+    branch_models,
+    customer_models,
+    catalog_models,
+    audit_models,
+)
 target_metadata = SQLModel.metadata
 settings = get_settings()
 configure_logging(settings)

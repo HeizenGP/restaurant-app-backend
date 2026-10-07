@@ -3,12 +3,15 @@
 Backend asíncrono para una aplicación de restaurante, construido con FastAPI,
 PostgreSQL, SQLModel y SQLAlchemy 2.x. La Fase 1 incorpora identidad,
 autenticación, clientes, direcciones, sucursales y autorización de personal por
-sucursal sobre la base profesional creada en la Fase 0.
+sucursal sobre la base profesional creada en la Fase 0. La Fase 2 añade el
+catálogo global, el menú público, su administración y los overrides por sucursal.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
 > la rama que ya estaba activa: **chore/backend-foundation**. No se cambió de
-> rama ni se realizó commit, merge, rebase o push.
+> rama ni se realizó commit, merge, rebase o push por parte del agente. Para
+> Fase 2 también prevalece la instrucción directa de continuar en esta misma
+> rama sobre el nombre feat/catalog del documento de requisitos.
 
 ## Alcance de la Fase 1
 
@@ -26,10 +29,10 @@ La fase cubre:
 - roles globales, roles por sucursal, permisos y asignaciones de personal;
 - una migración base de Alembic para las doce tablas de esta fase.
 
-No forman parte de esta fase catálogo, productos, favoritos, carrito, pedidos,
+No formaban parte de Fase 1 catálogo, productos, favoritos, carrito, pedidos,
 pagos, cocina, delivery, promociones ni notificaciones. En particular, el
 historial de pedidos y los favoritos de RF-08 quedan deliberadamente pendientes
-para las fases de Orders y Catalog.
+para fases posteriores. Fase 2 implementa Catalog, pero no incorpora favoritos.
 
 ## Stack y requisitos
 
@@ -76,6 +79,7 @@ app/
 │   └── infrastructure/
 │       ├── config/
 │       ├── database/
+│       ├── audit/
 │       └── logging/
 ├── modules/
 │   ├── auth/
@@ -93,6 +97,13 @@ app/
 │   │   ├── application/
 │   │   ├── infrastructure/persistence/
 │   │   └── presentation/
+│   ├── catalog/
+│   │   ├── domain/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   │   ├── authorization.py
+│   │   │   └── persistence/
+│   │   └── presentation/
 │   └── health/
 │       ├── application/
 │       ├── infrastructure/
@@ -102,7 +113,9 @@ app/
     └── errors.py
 migrations/
 ├── env.py
-└── versions/0001_create_phase1_identity_branches_customers.py
+└── versions/
+    ├── 0001_create_phase1_identity_branches_customers.py
+    └── 0002_create_catalog.py
 ~~~
 
 Lifespan crea un único engine y una fábrica de sesiones. Cada petición recibe
@@ -408,7 +421,8 @@ Al iniciar la experiencia, el frontend:
 La selección no concede permisos y no debe tratarse como una sucursal global
 del servidor. Cada módulo valida que la sucursal siga activa y cada operación
 administrativa consulta autorización actual en base de datos. El catálogo común
-y la disponibilidad por sucursal se implementarán en Fase 2.
+y la disponibilidad por sucursal están implementados en Fase 2: el frontend
+envía también branch_id a las dos consultas públicas de Catalog.
 
 ## Perfil y direcciones
 
@@ -495,8 +509,9 @@ pertenece a staff_assignments.
 
 ## Alembic y bases existentes
 
-migrations/env.py importa explícitamente los modelos de los tres slices antes de
-leer SQLModel.metadata. El filtro de autogenerate evita proponer drops de tablas
+migrations/env.py importa explícitamente los modelos de auth, customers,
+branches, catalog y auditoría compartida antes de leer SQLModel.metadata.
+El filtro de autogenerate evita proponer drops de tablas
 externas que todavía no pertenecen a los modelos.
 
 Comandos de inspección:
@@ -507,7 +522,8 @@ alembic heads
 alembic history
 ~~~
 
-La revisión actual es 0001_phase1. No ejecutes alembic upgrade head sobre una
+La cadena es base -> 0001_phase1 -> 0002_catalog, con un único head:
+0002_catalog. La revisión 0001 no se modificó. No ejecutes alembic upgrade head sobre una
 base existente sin inspeccionarla primero.
 
 ### Base limpia o exclusiva de test
@@ -534,8 +550,15 @@ downgrade no elimina extensiones compartidas.
    puede evaluarse alembic stamp 0001_phase1.
 
 Nunca se ejecuta stamp automáticamente. Una tabla con el mismo nombre no
-demuestra equivalencia. Durante esta implementación PostgreSQL no estuvo
+demuestra equivalencia. Durante la implementación de Fase 1 PostgreSQL no estuvo
 accesible en 127.0.0.1:5432; por seguridad no se aplicó upgrade ni stamp.
+Al cierre de Fase 2 la conexión sí respondió: hay 49 tablas preexistentes y no
+existe alembic_version. El esquema no equivale a las revisiones: faltan slug en
+categories, allows_notes/slug/sort_order en products, y tres tablas de Catalog;
+audit_logs usa BIGINT y before_data/after_data, no el contrato UUID y
+before_state/after_state. No se modificó esa base ni se realizó stamp.
+Antes de usarla se necesita una reconciliación no destructiva expresamente
+revisada; upgrade head no es seguro sobre ese esquema existente.
 
 ## Tests y calidad
 
@@ -554,7 +577,7 @@ refresh, logout y cambios sensibles. También se comprueban autorización entre
 sucursales, scopes, conflictos seguros, consultas con bloqueos, metadata y
 compilación offline del upgrade/downgrade sin ejecutar DDL.
 
-La prueba PostgreSQL se habilita exclusivamente con:
+Las pruebas PostgreSQL se habilitan exclusivamente con:
 
 ~~~bash
 pytest -m integration
@@ -562,9 +585,12 @@ pytest -m integration
 
 Requiere TEST_DATABASE_URL en el entorno, un nombre con test_ o _test, una base
 vacía y distinta de la habitual. Sin esa configuración se omite; pytest normal
-siempre la omite. Comprueba migración, tablas, claves, seeds, columna generada e
-índice default dentro de una transacción externa que revierte todo el DDL al
-terminar. No crea/elimina bases, no ejecuta downgrade y nunca modifica objetos
+siempre las omite. La prueba de Fase 1 apunta explícitamente a 0001_phase1 y
+comprueba sus doce tablas, claves, seeds, columna generada e índice default.
+La prueba de Fase 2 aplica head, comprueba las veinte tablas, constraints reales,
+CATALOG_MANAGE y operaciones del adaptador con auditoría. Cada prueba trabaja
+dentro de una transacción externa que revierte todo el DDL al terminar.
+No crean/eliminan bases, no ejecutan downgrade y nunca modifican objetos
 previos. No apuntes TEST_DATABASE_URL a desarrollo o producción.
 
 ## Errores y privacidad
@@ -587,7 +613,7 @@ lo exige.
 | Requisito | Estado | Evidencia de Fase 1 |
 | --- | --- | --- |
 | RF-01 | IMPLEMENTADO | Listado de sucursales activas y selección lógica por branch_id |
-| RF-02 | PARCIAL / PREPARADO | Modelo multi-sucursal listo; catálogo común queda para Fase 2 |
+| RF-02 | IMPLEMENTADO EN FASE 2 | Catálogo común y overrides por sucursal, sin duplicar productos |
 | RF-03 | IMPLEMENTADO | staff_assignments, roles BRANCH y autorización por sucursal |
 | RF-04 | IMPLEMENTADO | Guest representado por Customer sin User |
 | RF-05 | IMPLEMENTADO | Guest requiere nombre y teléfono verificado |
@@ -598,4 +624,229 @@ lo exige.
 Pendientes explícitos de RF-08:
 
 - historial de pedidos, que se implementará con Orders;
-- favoritos, que se implementarán con Catalog.
+- favoritos, pendientes de una fase futura expresamente autorizada; no forman
+  parte de Fase 2.
+
+## Fase 2 — Catálogo y menú
+
+El slice Catalog cubre CU-03/CU-20, RF-09 a RF-14 y RF-45. Mantiene dominio
+puro, DTO de aplicación, puertos concretos, adaptadores SQLAlchemy async y
+schemas/routers HTTP separados. Reutiliza autenticación, sesiones, autorización
+por sucursal y errores de Fase 1. No introduce dependencias ni modifica .env.
+
+### Tablas y migración
+
+| Tabla | Responsabilidad |
+| --- | --- |
+| categories | Categorías globales ordenadas, activación y archivado |
+| products | Producto global; categoría, precio base y allows_notes |
+| product_images | URL y metadata; una primary no archivada por producto |
+| product_presentations | Presentaciones configurables, delta y default |
+| product_addons | Grupos de opciones y límites de selección |
+| product_addon_options | Opciones gratuitas o con costo |
+| branch_products | Disponibilidad y override base por sucursal/producto |
+| audit_logs | Auditoría administrativa reutilizable, dentro de la transacción |
+
+0002_catalog depende de 0001_phase1 y crea solamente estas ocho tablas.
+Reutiliza restaurant_phase1_set_updated_at en siete triggers; no crea otra
+función equivalente. Las FK usan RESTRICT. Hay CHECK de precios no negativos,
+orden, nombres, slug y límites de selección; UNIQUE de slug de categoría y
+producto, nombre de categoría CITEXT y par sucursal/producto. Los índices
+parciales garantizan una imagen primary no archivada y una presentación default
+activa no archivada por producto. Los índices de lectura priorizan padres,
+estado y orden; auditoría indexa actor/fecha y entidad/fecha.
+
+La migración inserta idempotentemente CATALOG_MANAGE y lo asigna al ADMIN
+BRANCH existente, sin crear usuarios ni SUPERADMIN. El downgrade hasta
+0001_phase1 retira solo tablas, triggers y permiso de Fase 2; conserva tablas,
+roles, permisos base, extensiones y función updated_at de Fase 1.
+
+En una base que ya tenga Fase 1, verifica primero alembic current y equivalencia
+del esquema. Con backup y la base correcta, alembic upgrade head añade Fase 2.
+No se aplicó online durante esta implementación: la base local tiene un esquema
+preexistente incompatible, sin revisión Alembic, y no hay TEST_DATABASE_URL.
+La compilación offline y heads/history no sustituyen una prueba PostgreSQL real.
+
+### Precios y disponibilidad
+
+Todo importe persistido es NUMERIC(12,2); las reglas usan Decimal, nunca float.
+Enviar importes como strings decimales es la forma recomendada; las respuestas
+los serializan siempre con dos decimales.
+
+~~~text
+effective_base_price = price_override si existe; en otro caso products.base_price
+presentation.effective_price = effective_base_price + presentation.price_delta
+selección interna = precio de presentación + suma de additional_price elegido
+~~~
+
+Un precio base global de 20.00 y deltas de 0.00/15.00 producen 20.00/35.00.
+Con override de sucursal 22.00 producen 22.00/37.00. El override cambia la base,
+no reemplaza el precio final de cada presentación. Sin branch_products se
+heredan disponibilidad true y precio global. price_override=null restablece la
+herencia; is_available=false solo afecta a la sucursal indicada.
+
+| Estado | Menú público |
+| --- | --- |
+| AVAILABLE | Visible, is_available=true |
+| SOLD_OUT | Visible, is_available=false |
+| INACTIVE | Oculto |
+| ARCHIVED | Oculto |
+
+El producto necesita categoría activa/no archivada, estar activo/no archivado y
+tener al menos una presentación activa/no archivada. Se puede crear como
+borrador y completar después; no se inventa una presentación. El detalle
+administrativo expone is_publicable. No se exige que exista una default, solo
+que haya como máximo una activa. Las categorías sin productos publicables se
+omiten del menú.
+
+Los resultados ordenan por sort_order, nombre cuando corresponde, y UUID como
+último desempate. El menú no filtra por is_available. La lectura completa usa
+hasta cinco consultas por lotes más la comprobación de sucursal, con independencia
+del número de productos; no carga relaciones una a una ni hace un join cartesiano
+de todas las colecciones. Esta versión no implementa paginación del menú.
+
+### Endpoints públicos
+
+No requieren login. branch_id es un query parameter UUID obligatorio y debe
+identificar una sucursal activa.
+
+| Método y ruta | Resultado |
+| --- | --- |
+| GET /api/v1/catalog/menu?branch_id={uuid} | Categorías con productos, imágenes, presentaciones y adicionales |
+| GET /api/v1/catalog/products/{product_id}?branch_id={uuid} | Detalle con precios efectivos calculados por el backend |
+
+El detalle contiene categoría, estado, precio base efectivo, disponibilidad,
+allows_notes, imágenes/primary, presentaciones/default y grupos con options.
+No revela auditoría, permisos ni estados internos de archivado. Un producto
+oculto, borrador o inexistente devuelve 404.
+
+### Endpoints administrativos
+
+Todas las rutas siguientes tienen el prefijo /api/v1/admin/catalog.
+En conjunto hay 23 operaciones administrativas y dos públicas, etiquetadas
+admin-catalog y catalog en OpenAPI.
+
+| Métodos | Ruta | Operación |
+| --- | --- | --- |
+| GET, POST | /categories | Listar o crear categorías |
+| PATCH, DELETE | /categories/{category_id} | Editar o archivar categoría |
+| GET, POST | /products | Listar o crear productos |
+| GET, PATCH, DELETE | /products/{product_id} | Detalle administrativo, editar o archivar |
+| POST | /products/{product_id}/images | Crear metadata de imagen |
+| PATCH, DELETE | /products/{product_id}/images/{image_id} | Editar o archivar imagen |
+| POST | /products/{product_id}/presentations | Crear presentación |
+| PATCH, DELETE | /products/{product_id}/presentations/{presentation_id} | Editar o archivar presentación |
+| POST | /products/{product_id}/addons | Crear grupo |
+| PATCH, DELETE | /products/{product_id}/addons/{addon_id} | Editar o archivar grupo |
+| POST | /products/{product_id}/addons/{addon_id}/options | Crear opción |
+| PATCH, DELETE | /products/{product_id}/addons/{addon_id}/options/{option_id} | Editar o archivar opción |
+| GET, PUT | /branches/{branch_id}/products/{product_id} | Consultar o hacer UPSERT de disponibilidad/precio |
+
+GET/PATCH/PUT responden 200; POST responde 201; DELETE lógico responde 204
+sin body. Sin JWT: 401; sin permiso: 403; recurso inexistente/no perteneciente
+al padre: 404; conflicto: 409; payload inválido: 422; base no disponible: 503.
+Los errores mantienen el envelope existente y no exponen SQL, DSN o constraints.
+
+El detalle administrativo incluye producto, categoría y colecciones no
+archivadas, incluso inactivas; las opciones conservan product_addon_id. Es útil
+para completar productos que todavía no son públicos. Los listados
+administrativos incluyen inactivos y excluyen archivados.
+
+PATCH rechaza campos extra y body vacío. id, timestamps, deleted_at,
+actor_user_id, roles y auditoría nunca son asignables. Solo description y
+alt_text pueden limpiarse con null; otros campos PATCH no aceptan null. Los
+límites de adicionales se comprueban también contra el valor actual cuando el
+PATCH modifica solo min_select o max_select.
+
+~~~json
+{"is_available": false, "price_override": "22.00"}
+~~~
+
+El PUT crea o actualiza la misma configuración, sin duplicar el par. Exige
+is_available y acepta price_override nullable; omitir este último equivale a
+null, porque PUT representa la configuración completa. El GET sin override
+persistido devuelve los valores heredados.
+
+### Autorización actual y ownership
+
+El JWT identifica, pero los permisos se consultan en persistencia en cada
+operación. Se reutilizan CurrentPrincipal, decoder y validación de cuenta de
+Fase 1; guest y CUSTOMER sin permiso administrativo no pueden gestionar Catalog.
+
+Para el catálogo global se exige cuenta registrada activa/no eliminada y al
+menos una asignación ADMIN BRANCH activa/no terminada, con CATALOG_MANAGE, en
+una sucursal activa/no archivada. Esa es la decisión funcional de esta fase:
+un ADMIN válido puede modificar el menú común, sin inventar SUPERADMIN.
+
+Para branch_products se exige permiso CATALOG_MANAGE en exactamente la
+sucursal de la ruta. ADMIN de A no modifica disponibilidad o precio de B.
+Una sucursal inexistente/inactiva devuelve 404. La revocación de asignación se
+refleja en la siguiente petición; no depende de expiración del JWT.
+
+Imágenes y presentaciones verifican product_id; grupos y opciones verifican
+producto -> grupo -> opción. Cambiar UUID en una URL no permite cruzar padres.
+El puerto de autorización puede extenderse con un rol global futuro sin cambiar
+las reglas de catálogo ni duplicar autenticación.
+
+### Presentaciones, adicionales, notas e imágenes
+
+Presentaciones, grupos y opciones son datos configurables, no constantes.
+additional_price=0.00 significa gratuito. Los grupos exponen is_required,
+min_select y max_select; el mínimo efectivo es al menos uno cuando el grupo es
+obligatorio. Se validan pertenencia, opciones activas, duplicados y máximos.
+
+CatalogService.validate_selection es un caso de uso interno sin endpoint de
+compra: verifica sucursal, estado, presentación, opciones, límites y allows_notes,
+y calcula el precio desde datos del backend. No persiste notas ni selecciones,
+no crea carrito/pedido y no reserva stock. Una compra futura deberá volver a
+validar dentro de su propio flujo transaccional.
+
+Las imágenes solo almacenan URL HTTP(S), alt_text, orden y primary. No se
+aceptan credenciales embebidas en URL; no se descarga el recurso ni se persisten
+binarios. No se añadió upload, S3, Cloudinary, MinIO ni otro proveedor.
+
+### Archivado, auditoría y concurrencia
+
+DELETE es soft delete de categorías, productos y sus cuatro tipos de hijos.
+No existe eliminación física de catálogo. Archivar categoría con productos
+activos/no archivados devuelve 409 CATEGORY_HAS_ACTIVE_PRODUCTS; no hay cascade
+soft-delete. Inactivar una categoría oculta sus productos, sin archivarlos.
+
+Cada alta, edición o archivado registra actor, entidad, antes/después y fecha.
+BRANCH_PRODUCT_UPDATED incluye branch_id; las operaciones globales usan null.
+Hay 19 acciones de auditoría; UUID/Decimal/fecha se serializan de forma segura.
+El recorder reutilizable comparte AsyncSession y no confirma por separado:
+si falla la escritura, auditoría o commit, se revierte toda la operación.
+
+Se bloquea el producto al modificar hijos, archivarlo o configurar sucursal;
+las categorías se bloquean antes de crear/mover productos o archivarlas.
+Los índices únicos son la última defensa para primary/default. Los cambios
+desmarcan el indicador anterior y marcan el nuevo en la misma transacción.
+El UPSERT usa ON CONFLICT sobre la clave sucursal/producto. updated_at viene
+del trigger existente y se refresca antes de responder.
+
+### Validación de Fase 2 y pendientes
+
+~~~bash
+pytest -q tests/modules/catalog tests/test_phase2_migration.py
+pytest
+ruff check .
+ruff format --check .
+git diff --check
+alembic heads
+alembic history
+pytest -m integration
+~~~
+
+Las pruebas de Catalog cubren dominio, casos de uso, API con JWT real,
+autorización actual, archivado, consultas, constraints offline y auditoría
+atómica. La integración opt-in aplica migraciones a una base TEST vacía y
+verifica constraints PostgreSQL y el adaptador real. Sin TEST_DATABASE_URL
+se omite de forma explícita; no se declara migración online validada.
+
+El detalle de resultados, archivos y riesgos está en
+[docs/phase2-report.md](docs/phase2-report.md). Pendientes: prueba PostgreSQL real
+y aplicación controlada de migración en una base compatible o reconciliación
+autorizada del esquema preexistente. Favoritos, uploads
+físicos, carrito, pedidos, pagos, cocina, delivery y los demás módulos posteriores
+quedan expresamente fuera de esta fase.

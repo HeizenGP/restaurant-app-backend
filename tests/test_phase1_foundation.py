@@ -23,9 +23,9 @@ EXPECTED_PHASE_ONE_TABLES = {
 }
 
 
-def test_phase_one_metadata_contains_only_scoped_tables() -> None:
+def test_phase_one_metadata_tables_remain_available() -> None:
     assert auth_models and branch_models and customer_models
-    assert set(SQLModel.metadata.tables) == EXPECTED_PHASE_ONE_TABLES
+    assert EXPECTED_PHASE_ONE_TABLES <= set(SQLModel.metadata.tables)
 
 
 @pytest.mark.parametrize(

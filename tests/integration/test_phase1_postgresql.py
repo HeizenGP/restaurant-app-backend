@@ -54,7 +54,7 @@ def guarded_test_url(request: pytest.FixtureRequest) -> URL:
 def migrate_and_inspect(connection: Connection) -> None:
     config = migration_config()
     config.attributes["connection"] = connection
-    command.upgrade(config, "head")
+    command.upgrade(config, "0001_phase1")
     inspector = inspect(connection)
     assert set(inspector.get_table_names()) == EXPECTED_PHASE_ONE_TABLES | {
         "alembic_version"
