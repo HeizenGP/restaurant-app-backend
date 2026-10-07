@@ -10,6 +10,7 @@ from app.modules.cart.infrastructure.persistence import models as cart_models
 from app.modules.catalog.infrastructure.persistence import models as catalog_models
 from app.modules.customers.infrastructure.persistence import models as customer_models
 from app.modules.orders.infrastructure.persistence import models as order_models
+from app.modules.payments.infrastructure.persistence import models as payment_models
 from app.shared.infrastructure.audit import models as audit_models
 from app.shared.infrastructure.config.settings import get_settings
 from app.shared.infrastructure.database.engine import create_database_engine
@@ -24,6 +25,7 @@ _PERSISTENCE_MODEL_MODULES = (
     catalog_models,
     cart_models,
     order_models,
+    payment_models,
     audit_models,
 )
 target_metadata = SQLModel.metadata

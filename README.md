@@ -11,6 +11,8 @@ La Fase 4 incorpora pedidos históricos LOCAL/PICKUP/DELIVERY, checkout atómico
 idempotencia y configuración de mesas, recojo y cobertura por sucursal.
 La Fase 5 añade la cola de cocina, preparación, tiempos y transiciones auditadas
 sobre el estado y el historial existentes de Orders.
+La Fase 6 añade el ledger financiero, confirmación de efectivo y orquestación
+online con webhook verificado mediante un puerto de proveedor todavía no elegido.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en
@@ -23,9 +25,10 @@ sobre el estado y el historial existentes de Orders.
 > por el usuario en b2e9de5; el agente no crea commits ni pushes de Fase 3.
 > Fase 3 está ahora en 902014f. Para Fase 4 también prevalece la instrucción
 > directa de mantener chore/backend-foundation sobre feat/orders del adjunto.
-> El usuario guardó Fase 4 en 7201466. Fase 5 continúa desde ese HEAD en
-> **feat/kitchen**, como pide expresamente su documento de requisitos.
-> Los cambios de Fase 5 quedan sin staging, commit ni push.
+> El usuario guardó Fase 4 en 7201466. Fase 5 quedó consolidada en
+> **chore/backend-foundation**, commit 43af19e. Por instrucción directa,
+> Fase 6 se implementa en esa misma rama, aunque el adjunto indique feat/payments.
+> Los cambios de Fase 6 quedan sin staging, commit ni push.
 
 ## Alcance de la Fase 1
 
@@ -137,6 +140,14 @@ app/
 │   │   ├── application/
 │   │   ├── infrastructure/persistence/
 │   │   └── presentation/
+│   ├── payments/
+│   │   ├── domain/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   │   ├── gateway.py
+│   │   │   ├── orders.py
+│   │   │   └── persistence/
+│   │   └── presentation/
 │   └── health/
 │       ├── application/
 │       ├── infrastructure/
@@ -151,7 +162,8 @@ migrations/
     ├── 0002_create_catalog.py
     ├── 0003_create_cart.py
     ├── 0004_create_orders.py
-    └── 0005_create_kitchen.py
+    ├── 0005_create_kitchen.py
+    └── 0006_create_payments.py
 ~~~
 
 Lifespan crea un único engine y una fábrica de sesiones. Cada petición recibe
@@ -1423,5 +1435,116 @@ externa. Sin esta variable se omite: eso NO valida PostgreSQL real. No tocar la
 base manual incompatible ni usar stamp para reconciliarla.
 
 Resultados, archivos, índices, riesgos y pendientes:
-[docs/phase5-report.md](docs/phase5-report.md). No se avanza a Fase 6, Payments,
+[docs/phase5-report.md](docs/phase5-report.md). La Fase 5 no implementó Payments,
 scheduler, atención local, entrega pickup/delivery ni Notifications.
+
+## FASE 6 — PAYMENTS
+
+ONLINE PAYMENT ORCHESTRATION: IMPLEMENTADA.
+REAL EXTERNAL PAYMENT PROVIDER: NO IMPLEMENTADO / PENDIENTE DE SELECCIÓN.
+
+El adapter productivo falla cerrado con 503 PAYMENT_PROVIDER_UNAVAILABLE.
+No se elige pasarela, instala SDK o inventan firmas. El proveedor simulado y su
+firma de ejemplo existen únicamente en tests, nunca en la aplicación productiva.
+
+Payments usa el total histórico de Orders, Decimal en PEN; no recalcula desde
+Cart/Catalog. Orders conserva su lifecycle, Kitchen observa Orders sin llamadas
+directas desde Payments. La deuda histórica Orders.Domain → Cart.Domain se
+mantiene; no se amplía mediante dependencias nuevas desde Payments.
+
+### Ledger e intentos
+
+- payments: un pago lógico por Order; CASH/ONLINE; PENDING/PROCESSING/PAID/FAILED,
+  paid_at y señal interna reconciliation_required.
+- payment_attempts: operaciones externas separadas, key del cliente por pago,
+  key propia payment-attempt:<UUID> para proveedor, referencia, estado,
+  importe y tiempos. Máximo un intento CREATED/PROCESSING por Payment.
+- payment_status_history: cambios financieros con fuente, actor de caja,
+  intento, evento y timestamp del backend.
+- payment_provider_events: evidencia autenticada mínima y hash del body.
+  No se guarda raw payload, firma, tarjetas, headers ni secretos.
+
+Misma Idempotency-Key repite intento. Otra key con intento activo da 409.
+Timeout ambiguo mantiene CREATED recuperable con la misma key del proveedor;
+un rechazo confirmado conserva FAILED y permite nueva key. PAID no se degrada.
+Las garantías externas dependen de la idempotencia real del futuro proveedor.
+
+### API y autorización
+
+| Método | Ruta |
+| --- | --- |
+| POST | /api/v1/payments/orders/{order_id}/online |
+| GET | /api/v1/payments/orders/{order_id} |
+| POST | /api/v1/payments/webhooks/{provider_code} |
+| POST | /api/v1/admin/payments/branches/{branch_id}/orders/{order_id}/cash/confirm |
+
+Online/GET requieren JWT de CurrentCustomer dueño del Order (guest o registrado).
+Online exige Idempotency-Key y body ausente o {}. Body/query extras dan 422:
+no admite importe, moneda, PAID ni datos de tarjeta. Initiation no confirma dinero.
+Decline devuelve 200 con intento FAILED. Una acción cliente solo puede ser
+REDIRECT HTTPS sin credenciales o token PÚBLICO SDK, nunca secreto de proveedor.
+
+GET aplica ownership en SQL, no crea ledger y devuelve 404 si todavía no existe.
+Incluye hasta 100 intentos recientes, sin keys/referencias/acciones/historial
+interno. No se implementa listado admin ni permiso PAYMENT_VIEW innecesario.
+
+Cash exige usuario activo y PAYMENT_CASH_MANAGE en asignación activa de la
+sucursal. Solo ADMIN BRANCH recibe el permiso, no KITCHEN/CUSTOMER. Cobra
+LOCAL+CASH no cancelado por el total histórico. Conserva status, confirmed_at e
+historial operacional de Orders: no sustituye confirm-cash-release. Reintento
+retorna el mismo pago sin nueva historia.
+
+### Webhook y activación
+
+Sin JWT: el adapter autentica los bytes ANTES de construir VerifiedPaymentEvent
+y acceder a la base. Hash SHA-256 es trazabilidad, no autenticación. Máximo 64 KiB.
+Evento duplicado procesado devuelve 200 sin cambios; mismo ID con otro body, 409.
+Mismatch verificado de monto/moneda queda REJECTED y ACK 200 sin pagar.
+Referencia desconocida conserva evidencia y devuelve 503
+PAYMENT_PROVIDER_EVENT_PENDING para pedir reintento; el mismo evento puede
+procesarse cuando la referencia se persista. No fabrica Payment.
+
+Confirmación valida Order/Payment/Attempt, importe y moneda. Guarda pago,
+intento, evento, Orders y ambos historiales en una única transacción:
+
+- LOCAL ONLINE y DELIVERY: PENDING_PAYMENT → WAITING, confirmed_at del backend.
+- PICKUP: SCHEDULED antes de calculated_kitchen_release_at, WAITING desde ese
+  instante, usando reloj backend. Kitchen excluye SCHEDULED.
+- CANCELLED: conserva CANCELLED y no entra a cocina; registra verdad financiera
+  y marca conciliación. No implementa refund.
+- Segundo intento capturado tras PAID conserva evidencia y marca conciliación,
+  sin segunda historia PAID ni reactivación. Fallo tardío nunca degrada PAID.
+
+Locks Order → Payment → Attempt; dedupe evento precede esos locks.
+Reserva se confirma antes de la red; respuesta se guarda tras bloquear/revalidar.
+No se mantiene transacción de DB durante la llamada externa.
+
+### Migración y validación
+
+0006_payments depende de 0005_kitchen, crea cuatro tablas (38 de aplicación),
+checks/índices/triggers y permiso de caja. Migraciones 0001–0005 intactas;
+sin create_all ni DDL en startup. Downgrade rechaza ledger/eventos no vacíos
+ANTES de cualquier DDL para proteger auditoría; solo esquema TEST vacío permite
+retirar estas tablas. Nunca elimina Orders/Cart/Catalog/Kitchen.
+
+~~~bash
+ruff check .
+ruff format --check .
+pytest -q
+pytest tests/modules/payments -q
+pytest tests/test_phase6_migration.py -q
+pytest tests/integration/test_phase6_postgresql.py -m integration -q
+alembic heads
+alembic history
+git diff --check
+~~~
+
+Integración exige TEST_DATABASE_URL distinta de la normal, nombre TEST y esquema
+vacío; revierte todo. Omitida no significa validada. No aplicar upgrade/stamp
+a la base manual incompatible. Alembic es la única vía de cambios de esquema
+en una base compatible administrada y revisada.
+
+[Informe de Fase 6](docs/phase6-report.md): resultados, archivos y pendientes.
+Se conserva chore/backend-foundation, sin staging/commit/push.
+No Fase 7, scheduler PICKUP, caja contable, refunds, pagos parciales,
+cancelaciones, conciliación automática, notificaciones ni entrega.

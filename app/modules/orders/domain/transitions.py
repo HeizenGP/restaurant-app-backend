@@ -15,6 +15,7 @@ from app.modules.orders.domain.models import (
 
 if TYPE_CHECKING:
     from app.modules.orders.domain.lifecycle import OrderTransitionContext
+    from app.modules.orders.domain.payments import OrderPaymentContext
 
 QUEUE_STATUSES = (OrderStatus.WAITING, OrderStatus.PREPARING)
 
@@ -54,7 +55,7 @@ def allowed_statuses(mode: OrderMode, method: PaymentMethodType) -> set[OrderSta
 
 
 def validate_transition(
-    order: Order | OrderTransitionContext, target: OrderStatus
+    order: Order | OrderTransitionContext | OrderPaymentContext, target: OrderStatus
 ) -> None:
     route = flow(order.mode, order.payment_method_type)
     if order.status not in route or order.status == route[-1]:
@@ -72,17 +73,23 @@ def validate_transition(
         raise OrderRuleError("Online payment must be confirmed first")
 
 
-def status_after_payment(order: Order, now: datetime) -> OrderStatus:
-    """Future Payments policy only. No endpoint or payment write is provided."""
+def status_after_payment(
+    order: Order | OrderPaymentContext, now: datetime
+) -> OrderStatus:
+    """Orders owns the online activation decision, including pickup release."""
     aware(now)
     if (
         order.status != OrderStatus.PENDING_PAYMENT
         or order.payment_method_type != PaymentMethodType.ONLINE
     ):
         raise OrderRuleError("Order is not awaiting an online payment")
-    if (
-        order.pickup_details
-        and now < order.pickup_details.calculated_kitchen_release_at
-    ):
+    release_at = (
+        order.pickup_details.calculated_kitchen_release_at
+        if isinstance(order, Order) and order.pickup_details
+        else None
+        if isinstance(order, Order)
+        else order.calculated_kitchen_release_at
+    )
+    if order.mode == OrderMode.PICKUP and release_at is not None and now < release_at:
         return OrderStatus.SCHEDULED
     return OrderStatus.WAITING
