@@ -17,7 +17,8 @@ pytestmark = pytest.mark.integration
 
 
 def guarded_test_url(request: pytest.FixtureRequest) -> URL:
-    if request.config.getoption("markexpr") not in {
+    required = os.environ.get("REQUIRE_POSTGRES_INTEGRATION") == "1"
+    if not required and request.config.getoption("markexpr") not in {
         "integration",
         "performance",
         "integration and e2e",
@@ -26,7 +27,7 @@ def guarded_test_url(request: pytest.FixtureRequest) -> URL:
         pytest.skip("Opt-in PostgreSQL test: run pytest -m integration")
     raw = os.environ.get("TEST_DATABASE_URL")
     if not raw:
-        if os.environ.get("REQUIRE_POSTGRES_INTEGRATION") == "1":
+        if required:
             pytest.fail(
                 "CI requires TEST_DATABASE_URL; skipping is not success", pytrace=False
             )

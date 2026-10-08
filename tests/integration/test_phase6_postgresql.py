@@ -1,7 +1,6 @@
 """Opt-in only: empty dedicated TEST database, all DDL/data rolled back."""
 
 import asyncio
-from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -28,7 +27,6 @@ from app.modules.payments.infrastructure.orders import SQLAlchemyPaymentOrderLif
 from app.modules.payments.infrastructure.persistence.repositories import (
     SQLAlchemyPaymentRepository,
 )
-from app.shared.domain.time import utc_now
 from tests.integration.test_phase1_postgresql import guarded_test_url
 from tests.integration.test_phase5_postgresql import (
     insert_operational_fixtures,
@@ -176,7 +174,9 @@ def test_payments_migration_constraints_atomicity_and_kitchen_projection(request
                             ),
                             {
                                 "id": pickup.id,
-                                "release": utc_now() + timedelta(minutes=10),
+                                # Use the fixture's own schedule: a fresh now()+10m
+                                # can exceed estimated_ready_at by milliseconds.
+                                "release": pickup.pickup_details.estimated_ready_at,
                             },
                         )
                         await session.commit()

@@ -1,7 +1,8 @@
 # Fase 12 — hardening y aceptación de release
 
-Fecha: 2026-10-07. **RELEASE BLOCKED**, no “PostgreSQL real validado”.
-Rama chore/backend-foundation. HEAD inicial y conservado: 309ade6.
+Fecha: 2026-10-07. **POSTGRESQL REAL: VALIDATED. RELEASE BLOCKED** por pendientes externos.
+Rama chore/backend-foundation. Baseline de esta validación: b2ad4c5;
+309ade6 fue el HEAD inicial de la implementación F12 anterior.
 La instrucción directa de misma rama prevalece sobre chore/release-hardening del
 documento. Sin branch/worktree nuevo, staging, commit, push, tag o deploy.
 
@@ -10,7 +11,9 @@ documento. Sin branch/worktree nuevo, staging, commit, push, tag o deploy.
 Gates CI, contratos, revisión de seguridad, cabeceras ASGI, validación productiva,
 pruebas transversales, harness PostgreSQL, metodología de performance y tooling
 seguro de recuperación. Dos defectos de comportamiento corregidos con regresiones.
-El objetivo crítico PG real permanece abierto por falta de TEST_DATABASE_URL.
+El objetivo crítico PG real está cerrado: 45 pruebas de integración aprobadas,
+sin failures/skips, en una base TEST del contenedor Docker ya existente.
+No certifica proveedores, despliegue ni la migración de la base normal.
 
 ## 2. Objetivo F12
 
@@ -50,7 +53,7 @@ PARTIAL / backend only. HTTP/CORS/SSE; clientes/dispositivos reales pendientes.
 
 ## 9. RNF-03 Rendimiento
 
-PARTIAL. Batching/conteos unitarios; fixture PG/EXPLAIN preparado pero no ejecutado.
+PARTIAL. Budgets y EXPLAIN PG reales aprobados; falta carga productiva representativa.
 No cifras de latencia productiva ni SLA inventados.
 
 ## 10. RNF-04 Disponibilidad
@@ -63,7 +66,7 @@ PASS dentro del alcance de pruebas de código. No pentest ni certificación TLS/
 
 ## 12. RNF-06 Autorización
 
-PARTIAL. Matrices HTTP y revocación TEST pasan; validación con filas PG pendiente.
+PASS, alcance automatizado. Matrices HTTP, IDOR y revocación con filas PG reales pasan.
 
 ## 13. RNF-07 Privacidad
 
@@ -71,7 +74,7 @@ PASS en contratos de respuesta/errores/log app probados. Retención/legal extern
 
 ## 14. RNF-08 Trazabilidad
 
-PARTIAL. Graph/historia/rollback probados; E2E durable real pendiente.
+PASS, alcance automatizado. Graph/historia/rollback y E2E durable real aprobados.
 
 ## 15. RNF-09 Auditoría
 
@@ -83,7 +86,8 @@ PARTIAL. Scope multibranch/batches/paginación, no carga distribuida medida.
 
 ## 17. RNF-11 Persistencia
 
-BLOCKED. Sin ejecución PostgreSQL TEST; offline/AsyncMock no prueban persistencia.
+PASS, PostgreSQL TEST real. Migraciones, constraints, triggers, persistencia y locks
+aprobados; no certifica el schema normal ni un despliegue productivo.
 
 ## 18. RNF-12 Respaldo
 
@@ -99,15 +103,30 @@ PASS local. AST boundaries, Ruff, compileall, pip check y contratos reproducible
 
 ## 21. PostgreSQL real
 
-No servidor/utilidades PG TEST disponibles en WSL ni TEST_DATABASE_URL.
-No se habilitó Docker ni se creó/migró/resetearon bases normales.
-La inspección histórica F10 vio legado sin Alembic; no se certifica su estado actual.
+Contenedor existente `postgres`, ID `9aa3c65192ce`, imagen `postgres`, puerto5432;
+servidor PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2). No se instaló servidor ni
+se cambió contenedor/imagen/volumen/puerto/compose/Dockerfile.
+Settings identifica `localhost:5432`, usuario `postgres`, base normal
+`restaurante_app`. Consulta de pg_database confirmó su existencia y ausencia de
+`restaurant_test`; se creó solo `restaurant_test` con docker exec/psql.
+Antes de los tests tenía 0 tablas y 0 relaciones de usuario. La conexión Python
+leyó únicamente current_database()/version() y confirmó `restaurant_test`.
+No se conectó a la base normal para DDL/cleanup ni se certifica su schema actual.
+Verificación final: ambas bases siguen existiendo; restaurant_test conserva
+0 tablas/0 relaciones de usuario y 0 schemas phase*_test_ tras el cleanup propio.
+No se eliminó restaurant_test. .env conserva el SHA256 inicial (valor no publicado).
+No DROP/ALTER/cleanup, upgrade/stamp ni restore contra restaurante_app.
 
 ## 22. TEST_DATABASE_URL
 
 Solo opt-in explícito. Nombre test, host PostgreSQL, distinto de normal/local
 aliases, sin prod/production/staging. DB vacía globalmente antes de DDL.
-Ausencia local: skip; con REQUIRE_POSTGRES_INTEGRATION=1: failure.
+Ausencia local: skip; con REQUIRE_POSTGRES_INTEGRATION=1: failure, incluso sin -m.
+Ese flag es opt-in explícito también para pytest completo; los guards de nombre,
+host/base normal y emptiness siguen vigentes, con cinco regresiones adicionales.
+Para esta validación se deriva en memoria desde database_connection_url,
+conservando host/puerto/usuario/password y cambiando solo la base a restaurant_test.
+URL y flag viven exclusivamente en los procesos de pruebas; .env no modificado.
 Nunca se imprime URL/contraseña. No fallback a DATABASE_URL normal.
 
 ## 23. Full migration upgrade
@@ -116,14 +135,16 @@ Nuevo harness crea schema phase12_test_UUID validado/propio, aplica una única
 cadena 0001 → head, exige 60 tablas incluyendo alembic_version y users vacío.
 Sin stamp/create_all ni extensiones preparadas por fuera de 0001.
 Commit real y lectura tras disponer/recrear pool; limpia solo su schema TEST.
-Preparado, **no ejecutado**. No migration 0012 ni cambios en 0001–0011.
+**Ejecutado y aprobado**. No migration 0012 ni cambios en 0001–0011.
 
 ## 24. Integration tests
 
-44 casos PG recolectados: 18 previos + 8 transversales F12 + 11 carreras F12
-+ 6 E2E + 1 performance. Ejecución explícita local final: **44 skipped,
-2826 deselected in 1.30s**, falta TEST_DATABASE_URL. No se contó exit 0 con skips
-como PG aprobado.
+45 casos PG: 18 previos + 9 transversales F12 + 11 carreras F12 + 6 E2E + 1 performance.
+Ejecución final explícita: **45 passed, 2831 deselected in 61.47s**, 0 failed/0 skipped.
+Incluye FK/CHECK/UNIQUE/índices únicos parciales, JSONB/TIMESTAMPTZ, triggers
+PL/pgSQL, FOR UPDATE/SKIP LOCKED, commit/rollback, idempotencia y conexiones
+independientes. Se añadió prueba real del advisory lock OTP existente: espera
+observada en pg_locks, distinto PID, otra identidad no bloqueada y liberación por rollback.
 
 ## 25. E2E flows
 
@@ -133,8 +154,7 @@ assignment/dispatch/DELIVERED; cancelación pagada/refund cash; cancelación pre
 al pago online tardío; retraso/notificación/decisión humana sin compensación automática.
 Nuevo session verifica histórico, ledger, audit y proyecciones.
 Providers online son doubles TEST explícitos, no cobros reales.
-Ejecutar tests/e2e sin opt-in produjo 6 skipped in 0.21s; con integración,
-los 6 siguen omitidos por URL ausente.
+Ejecución aislada con opt-in explícito: **6 passed in 7.70s**, 0 failed/0 skipped.
 
 ## 26. Concurrency
 
@@ -144,7 +164,8 @@ cancel vs Kitchen, cancel vs payment y serve-local. Dos conexiones simultáneas,
 timeout/locks acotados, invariantes en tercera lectura. Solo ApplicationError
 es resultado competitivo esperado; excepciones SQL/runtime no se silencian.
 Carreras previas cubren online/refund, push claim/fencing y roulette/redemption.
-Todo PG real **NOT EXECUTED**, sin afirmar que AsyncMock valida locks.
+F12 concurrency: **11 passed in 13.05s**, 0 failed/0 skipped; las carreras
+previas también pasan dentro de los 45 casos reales, no mediante AsyncMock.
 
 ## 27. Financial invariants
 
@@ -152,7 +173,8 @@ Orders total histórico no se recalcula desde catálogo; PAID solo por ledger/re
 verificado; CASH admin y ONLINE webhook separados. Refund íntegro/único después
 de cancelación pagada, cancelación nunca se reactiva por capture tardío.
 Dashboard suma pagos/refunds en DB; receipt no cambia dinero; ruleta gratuita.
-Unit/API previos pasan; validación financiera real/provider pendiente.
+Invariantes financieras SQL reales aprobadas por integración/E2E; proveedores
+externos reales siguen pendientes, sin cobros/reembolsos externos en esta validación.
 
 ## 28. Branch permission matrix
 
@@ -166,7 +188,7 @@ Catalog global es deliberadamente global; overrides siguen branch-scoped.
 Ownership customer_id/user_id y predicados branch en almacenamiento.
 Sin scope: 403; ID extranjero bajo scope propio: 404; ningún body decide owner.
 F12 añade reviews/receipts/rewards/notifs/admin campaign/process extranjeros.
-Casos PG reales preparados, no ejecutados.
+Casos PG reales ejecutados y aprobados; ID customer/branch ajeno no filtra filas.
 
 ## 30. Auth/JWT
 
@@ -256,16 +278,17 @@ privacy de responses y roles actuales revisados.
 ## 43. Performance methodology
 
 Dataset TEST reproducible + capture SQL + perf_counter + EXPLAIN de lecturas reales.
-Ver [metodología y límites](performance-report.md). NOT EXECUTED.
+Ver [mediciones y límites](performance-report.md). EXECUTED / PASS local, sin SLA.
 
 ## 44. Menu performance
 
 Batches IN con hasta 5 queries repository, independiente del número de productos.
-Unit 50 productos validado; PG 250 y planes pendientes.
+PG 250 productos: 4 SQL repo, 44.871ms en la ejecución registrada.
+Sin adicionales en este dataset; no se extrapola a todos los menús productivos.
 
 ## 45. Cart performance
 
-GET un statement con snapshots y sin repricing/lock; PG12 líneas pendiente.
+GET un statement con snapshots y sin repricing/lock; PG12 líneas: 1 SQL, 6.407ms.
 Checkout revalida batch; writes por línea no son un N+1 de lectura.
 
 ## 46. Order status performance
@@ -276,23 +299,27 @@ Sin benchmark HTTP/status concurrente ni latencia afirmada.
 ## 47. Kitchen performance
 
 Proyección JSON en un statement, permiso adicional, sin llamadas/card.
-Presupuesto real preparado: <=2 SQL para páginas 10/50.
+Páginas 10/50 reales: 2 SQL cada una, 14.265/13.080ms en la ejecución registrada.
 
 ## 48. Dashboard performance
 
 Agregados financieros SQL, top10, branches/periodos acotados; 1 statement repo.
-Sin loading/sum de órdenes en Python; plan y tiempos reales pendientes.
+Sin loading/sum de órdenes en Python; 1 SQL, 6.802ms; EXPLAIN ejecución0.734ms.
+50 órdenes pagadas/PEN2000.00 verificados en el dataset sintético.
 
 ## 49. Query count
 
-Budgets PG preparados: menu<=5 repo; cart=1; kitchen<=2 service;
-notifications=2 repo; favorites<=7 service; dashboard=1 repo.
-Checkout captura conteo sin gate constante ficticio a inserts por línea.
+SQL reales: menu4 repo; cart1; kitchen2 service; notifications2 repo;
+favorites6 service (páginas10/50); dashboard1 repo. Budgets aprobados.
+Checkout12: 23 SQL/47.591ms, sin gate constante ficticio a inserts por línea.
 
 ## 50. EXPLAIN findings
 
-NINGUNO real: PostgreSQL no ejecutado. SQL compilado no se presenta como plan.
-No nuevo índice sin evidencia.
+EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) real sobre las lecturas TEST capturadas.
+Planes con Index/Bitmap scans, joins, aggregates y sorts; 0 bloques leídos de
+disco y 0 temporales en esos planes. Menú/favoritos planean su última lectura
+de adicionales vacíos, no la totalidad del flujo. Límites y datos completos en
+performance-report. No se añadió índice ni se inventó p95/SLA.
 
 ## 51. Availability
 
@@ -306,7 +333,8 @@ No prueba migración/persistencia ni disponibilidad de dependencias.
 
 ## 53. Readiness
 
-GET /api/v1/health/ready real: 503, DB no responde. GET rewards sin bearer: 401.
+Observación histórica al implementar F12: /api/v1/health/ready503 sin DB y rewards401.
+Esta revisión valida la conexión TEST, no usa readiness para certificar la DB normal.
 Probe SELECT 1 timeout y 503 seguro; no valida Alembic ni proveedores.
 Startup/shutdown/dispose probados en suite Health, sin auto-DDL.
 F12 añade prueba de failure parcial de startup y dispose del pool; shutdown
@@ -379,7 +407,7 @@ release_due existente; sin scheduler real. No loop/BackgroundTasks nuevo en HTTP
 
 ## 67. Production blockers
 
-PostgreSQL/CI real, schema normal/plan, restore drill, payment/refund/push/fiscal/
+CI real, schema normal/plan, restore drill, payment/refund/push/fiscal/
 OTP providers, worker/scheduler, TLS/DB privileges/monitoring y política de recuperación.
 
 ## 68. Release candidate decision
@@ -394,7 +422,7 @@ Sin warning filters laxos/xfail/noqa blanket; E402 solo bootstrap de scripts.
 
 ## 70. Pytest
 
-Resultados finales del código entregado, sin failures:
+Resultados históricos de la implementación F12 en 309ade6 (sin PostgreSQL):
 
 | Comando | Resultado exacto |
 | --- | --- |
@@ -420,15 +448,46 @@ las pruebas; no se presentan como completas ni aprobadas.
 
 ## 71. Integration Pytest
 
-pytest -m integration -q → 44 skipped, 2826 deselected in 1.30s, URL ausente.
-E2E + release PG seleccionados → 14 skipped in0.22s.
-Performance → 1 skipped,2869 deselected in1.28s.
-Esto NO cumple el gate de PG real.
+Validación actual sobre b2ad4c5 más el diff local, REQUIRE_POSTGRES_INTEGRATION=1:
+
+| Suite | Resultado exacto |
+| --- | --- |
+| Phase12 release PostgreSQL | 9 passed in 9.70s |
+| Phase12 concurrency PostgreSQL | 11 passed in 13.05s |
+| pytest -m integration -q | 45 passed, 2831 deselected in 61.47s |
+| E2E PostgreSQL explícito | 6 passed in 7.70s |
+| pytest -m performance -s -q | 1 passed, 2874 deselected in 8.73s |
+| Guards release/configuration | 46 passed in 0.14s |
+| pytest -m "not integration" -q, repetición final | 2831 passed, 45 deselected in 593.78s |
+| pytest -q, repetición final con PG obligatorio | 2876 passed in 658.45s |
+
+Todas esas suites tienen 0 failed/0 skipped. Los deselected corresponden al
+selector de la suite, no a pruebas PostgreSQL omitidas.
+Primera corrida real: 8 failed por fixture price_delta ausente; tras corregir,
+8 passed. Primera integración completa: 1 failed/38 passed (stop-first) por
+fixture pickup fuera de CHECK temporal; regresión fases6–9: 5 passed in6.98s.
+Después 44 passed in69.59s; se añadió la regresión advisory y pasó la corrida
+final de45. Sin xfail, skip añadido, assertion eliminada ni cambio de migraciones.
+
+Regresión general inicial: 3 failed, 2828 passed, 44 deselected in581.45s.
+Dos fueron TOKEN_EXPIRED en JWT de fixtures y uno HTTP500 en catálogo;
+los tres pasan aislados (3 passed in2.16s), y cancellation API:93 passed in69.00s.
+Clasificación provisional F (incidencia de ejecución): expiración inesperada en
+fixtures recién creados y HTTP500 durante una corrida a la que se envió SIGINT
+diagnóstico. La causa raíz de esos eventos no quedó confirmada; no se declara
+un bug de producción corregido por un retry ni se ocultaron los failures.
+Sin modificar esos tests, TTL/validación JWT, reloj del sistema ni assertions,
+la repetición non-integration y la completa pasaron, **0 failed/0 skipped/0 xfailed**.
+Diagnóstico observacional: non-integration wall593.755s/monotonic593.781s;
+completo wall658.420s/monotonic658.448s, sin discontinuidades >1s detectadas.
+Los 45 casos PG se ejecutan también en pytest completo mediante el flag explícito.
+Los skips antiguos por falta de URL son históricos; no hay skips en la validación final.
 
 ## 72. Alembic
 
 heads: 0011_customer_extras único. history: once revisiones lineales 0001..0011.
-No se aplicó upgrade a DB normal. Head offline no certifica parser/trigger real.
+No se aplicó upgrade a DB normal. La cadena se ejecutó realmente en TEST y los
+tests verificaron parser, constraints y triggers además del head offline.
 
 ## 73. OpenAPI check
 
@@ -447,8 +506,10 @@ python -m compileall -q app tests scripts: exit0, sin salida/error.
 
 ## 76. Git status
 
-Misma rama/HEAD, 18 tracked modificados y 48 archivos nuevos, índice sin staging.
-Sin add/commit/push/tag. git diff --check pasa; --stat tracked no incluye nuevos.
+Baseline actual b2ad4c5, checkout limpio al comenzar, misma rama/HEAD.
+Este cierre deja 10 archivos tracked modificados (6 tests/harness y 4 docs),
+sin archivos nuevos ni staging; no app/runtime, migrations ni CI modificados.
+Sin add/commit/push/tag. El inventario final inferior del diff 309ade6 es histórico.
 
 ## 77. Files created
 
@@ -485,22 +546,25 @@ Regresión catálogo falló antes del fix assigned_at<=now(), después 19 repos 
 LOCAL11 regresiones (permisos/body/estado/branch/retry/audit rollback) pasan.
 Configuration/backups/header/security regressions pasan. Hallazgos y severidad
 incluyen redacción Uvicorn y pruebas de reloj/plantilla sin debilitar producción.
-en security-review; PostgreSQL real sigue pendiente, no se “corrige” con mocks.
+en security-review. PostgreSQL real ahora aprobado; no se sustituyó por mocks.
+En este cierre: fixture price_delta explícito0 (B, test), horario pickup consistente
+(B, test), guard REQUIRE también para suite completa (E, configuración/harness),
+y regresión advisory real. Sin bug de runtime/migración PostgreSQL identificado.
 
 ## 81. Known risks
 
-Gate PG/CI abierto, legacy normal, operadores DB privilegiados, traffic abuse
-distribuido, ausencia de proveedores/procesos/drill, performance sin planes reales.
+Gate CI abierto, legacy normal, operadores DB privilegiados, traffic abuse
+distribuido, ausencia de proveedores/procesos/drill, performance sin carga productiva.
 El API readiness solo conecta; no declarar schema/producto completo por un 200.
 Los reportes anteriores son históricos, no resultados de esta revisión.
 
 ## 82. Recommendations
 
-Revisión del diff → TEST PG/CI real sin skips → resolver failures → performance/
-drill con evidencia → seleccionar/integrar proveedores y operar workers/scheduler
+Revisión del diff → CI real → drill autorizado con evidencia → seleccionar/
+integrar proveedores y operar workers/scheduler
 → preflight/plan normal aprobado → reevaluar release. No avanzar otra fase.
 
-## Anexo — inventario exacto del diff
+## Anexo histórico — inventario del diff F12 inicial (309ade6)
 
 Rutas relativas al checkout WSL /home/heizen27/proyectos/restaurante-backend.
 

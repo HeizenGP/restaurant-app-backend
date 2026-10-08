@@ -62,8 +62,9 @@ def test_representative_postgresql_dataset_query_budgets_and_plans(request):
                 )
                 await session.execute(
                     text(
-                        "INSERT INTO product_presentations(product_id,name,is_default) "
-                        "SELECT id,'TEST Plate',true FROM products "
+                        "INSERT INTO product_presentations(product_id,name,"
+                        "price_delta,is_default) "
+                        "SELECT id,'TEST Plate',0,true FROM products "
                         "WHERE id<>:product"
                     ),
                     ids,

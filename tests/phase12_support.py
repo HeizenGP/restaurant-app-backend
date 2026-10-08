@@ -164,8 +164,8 @@ async def seed(factory):
         )
         await session.execute(
             text(
-                "INSERT INTO product_presentations(id,product_id,name,is_default) "
-                "VALUES (:presentation,:product,'TEST Plate',true)"
+                "INSERT INTO product_presentations(id,product_id,name,price_delta,"
+                "is_default) VALUES (:presentation,:product,'TEST Plate',0,true)"
             ),
             ids,
         )

@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import text
 
+from app.modules.auth.domain.models import OtpPurpose
+from app.modules.auth.infrastructure.persistence.repositories import (
+    SQLAlchemyAuthRepository,
+)
 from app.modules.branches.infrastructure.persistence.repositories import (
     SQLAlchemyBranchRepository,
 )
@@ -27,6 +31,92 @@ from tests.phase12_support import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def test_real_otp_advisory_lock_serializes_empty_identity_and_releases_on_rollback(
+    request,
+):
+    url = guarded_test_url(request)
+
+    async def scenario():
+        async with fresh_database(url) as (_, factory):
+            async with factory() as first, factory() as second:
+                first_pid, second_pid = await asyncio.gather(
+                    first.scalar(text("SELECT pg_backend_pid()")),
+                    second.scalar(text("SELECT pg_backend_pid()")),
+                )
+                assert first_pid != second_pid
+                phone = "+519000001299"
+                purpose = OtpPurpose.GUEST_ACCESS
+                assert (
+                    await SQLAlchemyAuthRepository(first).latest_otp(
+                        phone, purpose, lock=True
+                    )
+                    is None
+                )
+                waiter = asyncio.create_task(
+                    SQLAlchemyAuthRepository(second).latest_otp(
+                        phone, purpose, lock=True
+                    )
+                )
+                try:
+                    async with factory() as observer:
+
+                        async def wait_until_blocked():
+                            while not await observer.scalar(
+                                text(
+                                    "SELECT count(*) FROM pg_locks WHERE pid=:pid "
+                                    "AND locktype='advisory' AND NOT granted"
+                                ),
+                                {"pid": second_pid},
+                            ):
+                                if waiter.done():
+                                    # Propagate SQL errors, never mask them.
+                                    await waiter
+                                    pytest.fail("OTP contender did not wait")
+                                await asyncio.sleep(0.01)
+
+                        await asyncio.wait_for(wait_until_blocked(), 3)
+                        assert not waiter.done()
+                        # A different identity must not share this lock.
+                        assert (
+                            await SQLAlchemyAuthRepository(observer).latest_otp(
+                                "+519000001298", purpose, lock=True
+                            )
+                            is None
+                        )
+                        await observer.rollback()
+                        await first.rollback()
+                        assert await asyncio.wait_for(waiter, 3) is None
+                        assert (
+                            await observer.scalar(
+                                text(
+                                    "SELECT count(*) FROM pg_locks WHERE pid=:pid "
+                                    "AND locktype='advisory' AND granted"
+                                ),
+                                {"pid": second_pid},
+                            )
+                            == 1
+                        )
+                        await second.rollback()
+                        assert (
+                            await observer.scalar(
+                                text(
+                                    "SELECT count(*) FROM pg_locks WHERE "
+                                    "pid IN (:first,:second) AND locktype='advisory'"
+                                ),
+                                {"first": first_pid, "second": second_pid},
+                            )
+                            == 0
+                        )
+                finally:
+                    if not waiter.done():
+                        waiter.cancel()
+                    await asyncio.gather(waiter, return_exceptions=True)
+                    await first.rollback()
+                    await second.rollback()
+
+    asyncio.run(scenario())
 
 
 def test_fresh_chain_to_head_committed_schema_persistence_and_rollback(request):

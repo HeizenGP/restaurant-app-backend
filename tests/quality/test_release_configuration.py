@@ -88,10 +88,46 @@ def test_pg_guard_rejects_normal_production_or_unnamed(monkeypatch, database):
         guarded_test_url(request)
 
 
-def test_ci_missing_test_database_fails_not_skips(monkeypatch):
+@pytest.mark.parametrize("markexpr", ["", "integration", "not integration"])
+def test_ci_missing_test_database_fails_not_skips(monkeypatch, markexpr):
     monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
     monkeypatch.setenv("REQUIRE_POSTGRES_INTEGRATION", "1")
-    request = SimpleNamespace(config=SimpleNamespace(getoption=lambda _: "integration"))
+    request = SimpleNamespace(config=SimpleNamespace(getoption=lambda _: markexpr))
+    with pytest.raises(pytest.fail.Exception):
+        guarded_test_url(request)
+
+
+def test_required_postgres_explicitly_opts_in_full_suite(monkeypatch):
+    monkeypatch.setenv("REQUIRE_POSTGRES_INTEGRATION", "1")
+    monkeypatch.setenv(
+        "TEST_DATABASE_URL", "postgresql://test:TEST@localhost/restaurant_test"
+    )
+    request = SimpleNamespace(config=SimpleNamespace(getoption=lambda _: ""))
+    url = guarded_test_url(request)
+    assert url.database == "restaurant_test" and url.drivername == "postgresql+asyncpg"
+
+
+def test_postgres_still_opt_in_without_required_flag(monkeypatch):
+    monkeypatch.delenv("REQUIRE_POSTGRES_INTEGRATION", raising=False)
+    monkeypatch.setenv(
+        "TEST_DATABASE_URL", "postgresql://test:TEST@localhost/restaurant_test"
+    )
+    request = SimpleNamespace(config=SimpleNamespace(getoption=lambda _: ""))
+    with pytest.raises(pytest.skip.Exception):
+        guarded_test_url(request)
+
+
+def test_required_postgres_cannot_bypass_normal_database_guard(monkeypatch):
+    monkeypatch.setenv("REQUIRE_POSTGRES_INTEGRATION", "1")
+    normal = make_url("postgresql://test:TEST@localhost/restaurant_test")
+    monkeypatch.setenv(
+        "TEST_DATABASE_URL", normal.render_as_string(hide_password=False)
+    )
+    monkeypatch.setattr(
+        "tests.integration.test_phase1_postgresql.get_settings",
+        lambda: SimpleNamespace(database_connection_url=normal),
+    )
+    request = SimpleNamespace(config=SimpleNamespace(getoption=lambda _: ""))
     with pytest.raises(pytest.fail.Exception):
         guarded_test_url(request)
 
