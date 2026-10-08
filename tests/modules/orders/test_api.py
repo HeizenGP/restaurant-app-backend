@@ -341,8 +341,10 @@ def test_orders_openapi_has_discriminator_and_no_payment_or_kitchen_write(api):
         and "/cancellation-requests" not in path
         and not path.endswith(("/review", "/receipt"))
     ]
-    assert len(paths) == 8
-    assert sum(len(schema["paths"][path]) for path in paths) == 14
+    assert len(paths) == 9
+    assert sum(len(schema["paths"][path]) for path in paths) == 15
+    # F12 fixes the existing LOCAL lifecycle gap; no financial write is added.
+    assert any(path.endswith("/serve-local") for path in paths)
     # F11 extensions belong to Reviews/Receipts, not Orders lifecycle writes.
     for suffix in ("review", "receipt"):
         extension = schema["paths"]["/api/v1/orders/{order_id}/" + suffix]

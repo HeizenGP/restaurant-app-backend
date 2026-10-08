@@ -133,6 +133,21 @@ class MemoryOrderSession:
         order = self.store.orders.get(order_id)
         return order if order and order.customer_id == customer_id else None
 
+    async def lock_branch_order(self, branch_id, order_id):
+        await self.begin()
+        order = self.store.orders.get(order_id)
+        return order if order and order.branch_id == branch_id else None
+
+    async def serve_local(self, order, history):
+        updated = replace(
+            order,
+            status=OrderStatus.SERVED,
+            updated_at=history.created_at,
+            history=(*order.history, history),
+        )
+        self.store.orders[order.id] = updated
+        return updated
+
     async def list_owned(self, customer_id, limit, offset):
         orders = sorted(
             (

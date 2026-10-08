@@ -52,8 +52,10 @@ def test_production_accepts_strong_auth_settings_without_debug() -> None:
     settings = Settings(
         _env_file=None,
         app_env="production",
-        jwt_secret="a" * 48,
-        otp_pepper="b" * 48,
+        jwt_secret="phase12-test-only-strong-signing-key-123456789",
+        otp_pepper="phase12-test-only-distinct-pepper-987654321",
+        database_url=None,
+        db_password="phase12-test-only-db-password",
         otp_debug_expose_code=False,
     )
 

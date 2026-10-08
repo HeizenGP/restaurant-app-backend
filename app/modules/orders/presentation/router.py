@@ -120,6 +120,23 @@ async def get_settings(
     )
 
 
+@admin_router.post(
+    "/branches/{branch_id}/orders/{order_id}/serve-local", response_model=OrderResponse
+)
+async def serve_local(
+    branch_id: UUID,
+    order_id: UUID,
+    principal: CurrentPrincipal,
+    service: OrderServiceDependency,
+    query: EmptyQuery,
+    body: Annotated[EmptyRequest | None, Body()] = None,
+) -> OrderResponse:
+    """Existing LOCAL READY -> SERVED graph; ORDER_MANAGE only, retry-safe."""
+    return OrderResponse.model_validate(
+        await service.complete_local(principal, branch_id, order_id)
+    )
+
+
 @admin_router.patch("/branches/{branch_id}/settings", response_model=SettingsResponse)
 async def update_settings(
     branch_id: UUID,

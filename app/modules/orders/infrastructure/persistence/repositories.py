@@ -256,6 +256,52 @@ class SQLAlchemyOrderRepository:
         )
         return rows[0] if rows else None
 
+    async def lock_branch_order(self, branch_id: UUID, order_id: UUID) -> Order | None:
+        rows = await self._load(
+            select(OrderModel)
+            .where(OrderModel.id == order_id, OrderModel.branch_id == branch_id)
+            .with_for_update()
+        )
+        return rows[0] if rows else None
+
+    async def serve_local(self, order: Order, history: StatusHistory) -> Order:
+        from app.modules.orders.domain.transitions import validate_transition
+
+        if (
+            order.mode != OrderMode.LOCAL
+            or order.status != OrderStatus.READY
+            or order.confirmed_at is None
+            or history.from_status != order.status
+            or history.to_status != OrderStatus.SERVED
+            or history.changed_by_user_id is None
+        ):
+            raise OrderConflictError("LOCAL_SERVE_NOT_ALLOWED")
+        validate_transition(order, history.to_status)
+        result = await self._session.execute(
+            update(OrderModel)
+            .where(
+                OrderModel.id == order.id,
+                OrderModel.branch_id == order.branch_id,
+                OrderModel.mode == OrderMode.LOCAL,
+                OrderModel.status == OrderStatus.READY,
+                OrderModel.payment_status == order.payment_status,
+                OrderModel.confirmed_at.is_not(None),
+            )
+            .values(status=OrderStatus.SERVED)
+            .returning(OrderModel.updated_at)
+        )
+        updated_at = result.scalar_one_or_none()
+        if updated_at is None:
+            raise OrderConflictError("LOCAL_SERVE_NOT_ALLOWED")
+        self._session.add(OrderStatusHistoryModel(order_id=order.id, **asdict(history)))
+        await flush(self._session)
+        return replace(
+            order,
+            status=OrderStatus.SERVED,
+            updated_at=updated_at,
+            history=(*order.history, history),
+        )
+
     async def lock_preparation_order(
         self, branch_id: UUID, order_id: UUID
     ) -> OrderTransitionContext | None:

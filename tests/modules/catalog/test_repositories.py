@@ -63,6 +63,14 @@ def compiled(statement: object) -> str:
     return str(statement.compile(dialect=postgresql.dialect()))
 
 
+def test_global_catalog_permission_rejects_future_staff_assignment():
+    db = session()
+    asyncio.run(SQLAlchemyCatalogAuthorization(db).can_manage(uuid4(), None))
+    sql = compiled(db.execute.await_args.args[0])
+    assert "staff_assignments.assigned_at <= now()" in sql
+    assert "staff_assignments.ended_at IS NULL" in sql
+
+
 def test_public_menu_batches_children_in_constant_query_count():
     db = session()
     category = CategoryModel(name="Arroces", slug="arroces")

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.infrastructure.persistence.models import (
@@ -42,6 +42,7 @@ class SQLAlchemyCatalogAuthorization:
             .where(
                 StaffAssignmentModel.user_id == user_id,
                 StaffAssignmentModel.is_active.is_(True),
+                StaffAssignmentModel.assigned_at <= func.now(),
                 StaffAssignmentModel.ended_at.is_(None),
                 UserModel.account_status == "ACTIVE",
                 UserModel.deleted_at.is_(None),

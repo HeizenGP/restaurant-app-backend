@@ -38,6 +38,7 @@ def get_order_service(
         settings=SQLAlchemyOrderSettingsRepository(session),
         estimator=SQLAlchemyKitchenLoadEstimator(repository),
         authorization=SQLAlchemyOrderAuthorization(session),
+        audit=SQLAlchemyAuditRecorder(session),
     )
 
 

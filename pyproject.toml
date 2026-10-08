@@ -11,6 +11,8 @@ addopts = "-ra"
 filterwarnings = ["error"]
 markers = [
     "integration: PostgreSQL tests, opt-in with pytest -m integration and TEST_DATABASE_URL",
+    "e2e: cross-slice backend flows (integration when PostgreSQL is required)",
+    "performance: bounded query counts/plans, never a wall-clock SLA gate",
 ]
 
 [tool.ruff]

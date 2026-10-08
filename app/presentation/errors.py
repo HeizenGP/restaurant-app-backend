@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
+from app.presentation.hardening import apply_headers
 from app.shared.application.exceptions import (
     ApplicationError,
     ConflictError,
@@ -108,6 +109,8 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
     response = error_response(
         500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred"
     )
+    # ServerErrorMiddleware is outside ordinary ASGI middleware.
+    apply_headers(response.headers, request.state.request_id)
     # ServerErrorMiddleware is outside CORSMiddleware. Preserve allowed-origin
     # headers for this response without changing the application factory contract.
     origin = request.headers.get("origin")

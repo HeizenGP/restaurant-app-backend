@@ -17,10 +17,19 @@ pytestmark = pytest.mark.integration
 
 
 def guarded_test_url(request: pytest.FixtureRequest) -> URL:
-    if request.config.getoption("markexpr") != "integration":
+    if request.config.getoption("markexpr") not in {
+        "integration",
+        "performance",
+        "integration and e2e",
+        "integration and performance",
+    }:
         pytest.skip("Opt-in PostgreSQL test: run pytest -m integration")
     raw = os.environ.get("TEST_DATABASE_URL")
     if not raw:
+        if os.environ.get("REQUIRE_POSTGRES_INTEGRATION") == "1":
+            pytest.fail(
+                "CI requires TEST_DATABASE_URL; skipping is not success", pytrace=False
+            )
         pytest.skip("TEST_DATABASE_URL is not configured")
     try:
         url = make_url(raw)
@@ -28,7 +37,11 @@ def guarded_test_url(request: pytest.FixtureRequest) -> URL:
         pytest.fail("TEST_DATABASE_URL is not a valid database URL", pytrace=False)
     if url.drivername not in {"postgres", "postgresql", "postgresql+asyncpg"}:
         pytest.fail("Integration tests require PostgreSQL", pytrace=False)
-    database_name = url.database or ""
+    database_name = (url.database or "").lower()
+    if not url.host or any(
+        marker in database_name for marker in ("production", "prod", "staging")
+    ):
+        pytest.fail("A TEST-only PostgreSQL host/database is required", pytrace=False)
     if not (
         database_name.startswith("test_")
         or database_name.endswith("_test")

@@ -5,6 +5,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.production.example
+*.dump
+*.backup
+*.sql.gz
+release-test-results.xml
+performance-results.json
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

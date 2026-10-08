@@ -20,6 +20,57 @@ La Fase 9 añade notificaciones in-app, registro de dispositivos, outbox push y
 SSE autenticado para clientes, administración y cocina.
 La Fase 10 añade administración de clientes, personal y sucursales, overview
 de configuración existente y dashboard financiero de solo lectura.
+La Fase 11 incorpora favoritos, reviews de pedidos completados, solicitudes
+fiscales mediante un puerto todavía sin proveedor y ruleta promocional gratuita.
+La Fase 12 añade hardening, gates CI, contratos OpenAPI, revisión de seguridad,
+pruebas PostgreSQL/E2E/carreras/performance y runbooks de release/recuperación.
+
+## Estado de release — Fase 12
+
+**RELEASE BLOCKED.** Rama actual: chore/backend-foundation; HEAD inicial F12:
+309ade6. Se respeta la instrucción directa de trabajar en la misma rama; no se
+creó chore/release-hardening. Sin staging, commit, push, tag o deploy del agente.
+
+Calidad/seguridad local probadas. PostgreSQL real pendiente: TEST_DATABASE_URL
+no está configurada; skips no son validación. CI con PostgreSQL 17 está configurado,
+**no ejecutado aún**; requiere commit/push del usuario. No migrar/stamp/resetear
+la base normal para ejecutar tests. Proveedores reales payment/refund/push/fiscal/
+OTP, worker/scheduler productivos y restore drill siguen pendientes.
+
+- [Informe y resultados F12](docs/phase12-report.md).
+- [RNF y decisión de release](docs/release-readiness.md).
+- [Permisos, IDOR y seguridad](docs/security-review.md).
+- [Trazabilidad F0–12](docs/release-traceability.md).
+- [Guía API](docs/api-guide.md), [OpenAPI](docs/openapi.json)
+  e [inventario generado](docs/api-inventory.md).
+- [Despliegue/migraciones/rollback](docs/release-runbook.md).
+- [Backup/restore](docs/backup-restore-runbook.md) y
+  [metodología de performance](docs/performance-report.md).
+
+Validación local offline:
+
+~~~bash
+source .venv/bin/activate
+ruff check .
+ruff format --check .
+python -m pip check
+python -m compileall -q app tests scripts
+pytest -m "not integration"
+python scripts/export_openapi.py --check
+python scripts/release_check.py
+~~~
+
+Solo con una DB PostgreSQL **TEST dedicada, vacía y distinta de normal** y URL
+configurada mediante entorno seguro:
+
+~~~bash
+pytest -m integration -rP
+pytest -m performance -s
+~~~
+
+No hacer upgrade antes: el harness controla Alembic y su propio schema TEST.
+F12 corrige el gap probado LOCAL READY → SERVED con operación admin específica
+ORDER_MANAGE; no agrega estado/migration ni autorización genérica para cambiar estado.
 
 > **Rama de trabajo.** El requerimiento inicial mencionaba
 > **feat/auth-and-users**, pero por instrucción directa posterior se continuó en

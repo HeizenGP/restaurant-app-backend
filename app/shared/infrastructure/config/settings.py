@@ -130,13 +130,38 @@ class Settings(BaseSettings):
         for name, value in secrets.items():
             if (
                 len(value) < 32
-                or "change_me" in value.lower()
-                or "change-before" in value
+                or any(
+                    marker in value.lower()
+                    for marker in (
+                        "change_me",
+                        "change-before",
+                        "placeholder",
+                        "replace_me",
+                        "replace-me",
+                        "example-secret",
+                        "your-secret",
+                    )
+                )
+                or len(set(value)) < 8
             ):
                 raise ValueError(
                     f"{name} must be a strong non-placeholder secret "
                     "in staging/production"
                 )
+        if self.app_debug:
+            raise ValueError("APP_DEBUG cannot be enabled in staging/production")
+        database_password = (
+            make_url(self.database_url.get_secret_value()).password
+            if self.database_url is not None
+            else self.db_password.get_secret_value()
+        )
+        if not database_password or any(
+            marker in database_password.lower()
+            for marker in ("change_me", "placeholder", "replace_me", "replace-me")
+        ):
+            raise ValueError(
+                "Database credentials must be configured in staging/production"
+            )
         if self.otp_debug_expose_code:
             raise ValueError("OTP_DEBUG_EXPOSE_CODE cannot be enabled in production")
         return self

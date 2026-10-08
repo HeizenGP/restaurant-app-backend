@@ -54,6 +54,7 @@ from app.modules.orders.domain.policies import (
 )
 from app.modules.orders.domain.transitions import validate_transition
 from app.shared.application.audit import AuditRecord, AuditRecorder
+from app.shared.application.exceptions import DependencyUnavailableError
 from app.shared.domain.time import utc_now
 
 
@@ -109,6 +110,8 @@ class OrderService:
         estimator: KitchenLoadEstimator,
         authorization: OrderAuthorization,
         clock: Callable[[], datetime] = utc_now,
+        *,
+        audit: AuditRecorder | None = None,
     ) -> None:
         self._repository = repository
         self._checkout = checkout
@@ -117,6 +120,7 @@ class OrderService:
         self._estimator = estimator
         self._authorization = authorization
         self._clock = clock
+        self._audit = audit
 
     @staticmethod
     def _replay(order: Order, customer_id: UUID, command: OrderCreate) -> Order:
@@ -319,6 +323,59 @@ class OrderService:
         return await self._repository.list_owned(
             customer_identity(principal), limit, offset
         )
+
+    async def complete_local(
+        self, principal: Principal, branch_id: UUID, order_id: UUID
+    ) -> Order:
+        try:
+            if (
+                principal.principal_type != PrincipalType.REGISTERED
+                or principal.user_id is None
+                or not await self._authorization.has_permission(
+                    principal.user_id, branch_id, "ORDER_MANAGE"
+                )
+            ):
+                raise OrderPermissionDeniedError("ORDER_MANAGE")
+            order = await self._repository.lock_branch_order(branch_id, order_id)
+            if order is None:
+                raise OrderNotFoundError()
+            if order.mode != OrderMode.LOCAL or order.confirmed_at is None:
+                raise OrderConflictError("LOCAL_SERVE_NOT_ALLOWED")
+            if order.status == OrderStatus.SERVED:
+                await self._repository.commit()
+                return order
+            if order.status != OrderStatus.READY:
+                raise OrderConflictError("LOCAL_SERVE_NOT_ALLOWED")
+            validate_transition(order, OrderStatus.SERVED)
+            if self._audit is None:
+                raise DependencyUnavailableError("Administrative audit unavailable")
+            history = StatusHistory(
+                from_status=order.status,
+                to_status=OrderStatus.SERVED,
+                changed_by_user_id=principal.user_id,
+                reason="Local order served by authorized staff",
+                created_at=self._clock(),
+            )
+            updated = await self._repository.serve_local(order, history)
+            await self._audit.record(
+                AuditRecord(
+                    actor_user_id=principal.user_id,
+                    branch_id=branch_id,
+                    action="ORDER_LOCAL_SERVED",
+                    entity_type="order",
+                    entity_id=order.id,
+                    before_state={"status": order.status.value},
+                    after_state={"status": updated.status.value},
+                )
+            )
+            await self._repository.commit()
+            return updated
+        except OrderRuleError:
+            await self._repository.rollback()
+            raise OrderConflictError("LOCAL_SERVE_NOT_ALLOWED") from None
+        except Exception:
+            await self._repository.rollback()
+            raise
 
     async def confirm_cash_release(self, principal: Principal, order_id: UUID) -> Order:
         if (
